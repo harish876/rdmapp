@@ -10,6 +10,9 @@ if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif ()
 
+# Enable compile_commands.json generation for LSP support
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 string(LENGTH "${CMAKE_SOURCE_DIR}/" SOURCE_PATH_LENGTH)
 add_definitions("-DSOURCE_PATH_LENGTH=${SOURCE_PATH_LENGTH}")
 
@@ -120,13 +123,14 @@ if (RDMAPP_BUILD_EXAMPLES)
     examples/acceptor.cc
     examples/connector.cc
     examples/qp_transmission.cc
+    examples/src/rdma_reed_solomon.cpp
   )
   add_library(rdmapp_examples STATIC ${RDMAPP_EXAMPLES_LIB_SOURCE_FILES})
   target_compile_options(rdmapp_examples ${RDMAPP_COMPILE_OPTIONS})
   target_include_directories(rdmapp_examples PUBLIC examples/include)
   target_link_libraries(rdmapp_examples PUBLIC rdmapp)
   target_link_options(rdmapp_examples ${RDMAPP_LINK_OPTIONS})
-  set(RDMAPP_EXAMPLES helloworld send_bw write_bw)
+  set(RDMAPP_EXAMPLES helloworld send_bw write_bw rdma_reed_solomon_example)
   foreach (EXAMPLE IN LISTS RDMAPP_EXAMPLES)
     add_executable(${EXAMPLE} examples/${EXAMPLE}.cc)
     target_link_libraries(${EXAMPLE} rdmapp_examples)
