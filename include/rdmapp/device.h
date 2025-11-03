@@ -83,8 +83,9 @@ public:
    * @param device_num The index of the target device.
    * @param port_num The port number of the target device.
    */
-  device(uint16_t device_num = 0, uint16_t port_num = 1);
+  //device(uint16_t device_num = 0, uint16_t port_num = 1);
 
+  device(uint16_t device_num = 0, uint16_t port_num = 2, int gid_index = -1);
   /**
    * @brief Get the device port number.
    *

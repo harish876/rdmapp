@@ -66,7 +66,7 @@ rdmapp::task<void> client(rdmapp::connector &connector) {
 }
 
 int main(int argc, char *argv[]) {
-  auto device = std::make_shared<rdmapp::device>(0, 1, 1);
+  auto device = std::make_shared<rdmapp::device>(0, 1);
   auto pd = std::make_shared<rdmapp::pd>(device);
   auto cq = std::make_shared<rdmapp::cq>(device);
   auto cq_poller = std::make_shared<rdmapp::cq_poller>(cq);
