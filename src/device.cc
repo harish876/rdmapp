@@ -81,8 +81,8 @@ void device::open_device(struct ibv_device *target, uint16_t port_num) {
   struct ibv_query_device_ex_input query = {};
   check_rc(::ibv_query_device_ex(ctx_, &query, &device_attr_ex_),
            "failed to query extended attributes");
-  // if grid index not specified
-  if(gid_index_ == -1) { gid_index_ = 0; }
+  // Removed due to addition of default value
+  // gid_index_ = 0;
 
   check_rc(::ibv_query_gid(ctx_, port_num, gid_index_, &gid_),
            "failed to query gid");
