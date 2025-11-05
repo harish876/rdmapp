@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include <infiniband/verbs.h>
+#include <infiniband/mlx5dv.h>
 
 #include "rdmapp/error.h"
 
@@ -74,7 +75,15 @@ struct ibv_device *device_list::at(size_t i) {
 void device::open_device(struct ibv_device *target, uint16_t port_num) {
   device_ = target;
   port_num_ = port_num;
-  ctx_ = ::ibv_open_device(device_);
+  if(::mlx5dv_is_supported(device_)) {
+    printf("mlx5dv is supported\n");
+    ctx_attr_.flags = MLX5DV_CONTEXT_FLAGS_DEVX;
+    ctx_attr_.comp_mask = 0;
+	  ctx_ = ::mlx5dv_open_device(device_, &ctx_attr_);
+  }
+  else {
+    ctx_ = ::ibv_open_device(device_);
+  }
   check_ptr(ctx_, "failed to open device");
   check_rc(::ibv_query_port(ctx_, port_num_, &port_attr_),
            "failed to query port");

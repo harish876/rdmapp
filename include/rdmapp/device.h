@@ -5,6 +5,7 @@
 #include <string>
 
 #include <infiniband/verbs.h>
+#include <infiniband/mlx5dv.h>
 
 #include "rdmapp/detail/noncopyable.h"
 
@@ -51,6 +52,8 @@ class device : public noncopyable {
   struct ibv_port_attr port_attr_;
   struct ibv_device_attr_ex device_attr_ex_;
   union ibv_gid gid_;
+
+  struct mlx5dv_context_attr ctx_attr_;
 
   int gid_index_;
   uint16_t port_num_;
