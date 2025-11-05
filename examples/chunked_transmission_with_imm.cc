@@ -37,11 +37,15 @@ rdmapp::task<void> handle_qp(std::shared_ptr<rdmapp::qp> qp,
   size_t num_chunks =
       (buffer_size + DEFAULT_CHUNK_SIZE - 1) / DEFAULT_CHUNK_SIZE;
   std::cout << "Receiving " << buffer_size << " bytes in " << num_chunks
-            << " chunks via one-sided RDMA writes" << std::endl;
+            << " chunks via RDMA write_with_imm" << std::endl;
 
-  auto [_, imm] = co_await qp->recv(recv_mr);
-  if (imm.has_value()) {
-    std::cout << "Received completion signal: " << imm.value() << std::endl;
+  // Post one receive for each chunk (each chunk uses write_with_imm)
+  for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
+    auto [_, imm] = co_await qp->recv(recv_mr);
+    if (imm.has_value()) {
+      std::cout << "Received chunk " << chunk_idx << " (imm=" << imm.value() 
+                << ")" << std::endl;
+    }
   }
 
   std::cout << "All chunks received! Buffer size: " << recv_buffer.size()
@@ -92,7 +96,7 @@ rdmapp::task<void> client(rdmapp::connector &connector, size_t buffer_size) {
       (buffer_size + DEFAULT_CHUNK_SIZE - 1) / DEFAULT_CHUNK_SIZE;
   std::cout << "Sending " << buffer_size << " bytes in " << num_chunks
             << " chunks of " << DEFAULT_CHUNK_SIZE
-            << " bytes each via one-sided RDMA writes" << std::endl;
+            << " bytes each via RDMA write_with_imm" << std::endl;
 
   for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
     size_t chunk_offset = chunk_idx * DEFAULT_CHUNK_SIZE;
@@ -104,26 +108,14 @@ rdmapp::task<void> client(rdmapp::connector &connector, size_t buffer_size) {
                                  chunk_offset),
         static_cast<uint32_t>(chunk_length), remote_mr.rkey());
 
-    // Single sided writes
-    std::cout << "Writing chunk " << chunk_idx << ": remote_addr=" 
-              << std::hex << reinterpret_cast<uintptr_t>(chunk_remote_mr.addr()) 
-              << " rkey=" << chunk_remote_mr.rkey() << " length=" << std::dec 
-              << chunk_length << std::endl;
-    co_await qp->write(chunk_remote_mr, send_buffer.data() + chunk_offset,
-                       chunk_length);
-    std::cout << "Write completed for chunk " << chunk_idx << std::endl;
+    // Use write_with_imm for each chunk (imm value is the chunk index)
+    co_await qp->write_with_imm(chunk_remote_mr,
+                                send_buffer.data() + chunk_offset, chunk_length,
+                                static_cast<uint32_t>(chunk_idx));
 
     std::cout << "Sent chunk " << chunk_idx << ": offset=" << chunk_offset
               << " length=" << chunk_length << std::endl;
   }
-
-  rdmapp::remote_mr final_remote_mr(
-      reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(remote_mr.addr())),
-      static_cast<uint32_t>(1), remote_mr.rkey());
-  uint8_t dummy = 0;
-  auto dummy_mr = std::make_shared<rdmapp::local_mr>(
-      qp->pd_ptr()->reg_mr(&dummy, 1));
-  co_await qp->write_with_imm(final_remote_mr, dummy_mr, 0xDEADBEEF);
 
   std::cout << "All chunks sent!" << std::endl;
   co_return;
@@ -171,3 +163,4 @@ int main(int argc, char *argv[]) {
   looper.join();
   return 0;
 }
+
