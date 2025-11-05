@@ -21,6 +21,7 @@
 #include <vector>
 
 #include <infiniband/verbs.h>
+#include <infiniband/mlx5dv.h>
 
 #include "rdmapp/error.h"
 #include "rdmapp/executor.h"
@@ -133,7 +134,6 @@ void qp::create_mlx5() {
   ex.comp_mask  = IBV_QP_INIT_ATTR_PD;  
   ex.pd         = pd_->pd_;
   if (srq_ != nullptr) {
-    ex.comp_mask |= IBV_QP_INIT_ATTR_SRQ;
     ex.srq = raw_srq_;
   }
   struct mlx5dv_qp_init_attr dv = {};
