@@ -45,9 +45,12 @@ rdmapp::task<void> handle_qp(std::shared_ptr<rdmapp::qp> qp,
   char warmup_send[6] = "world";
   co_await qp->send(warmup_send, sizeof(warmup_send));
   std::cout << "Connection warmed up, received " << warmup_n << " bytes" << std::endl;
+  std::cout << "Server ready, posting receives for " << num_chunks << " chunks..." << std::endl;
 
   // Post one receive for each chunk (each chunk uses write_with_imm)
   for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
+    std::cout << "Server waiting for chunk " << chunk_idx << "..." << std::endl;
+    std::cout.flush();
     auto [_, imm] = co_await qp->recv(recv_mr);
     if (imm.has_value()) {
       std::cout << "Received chunk " << chunk_idx << " (imm=" << imm.value() 
@@ -111,6 +114,16 @@ rdmapp::task<void> client(rdmapp::connector &connector, size_t buffer_size) {
   char warmup_recv[6];
   auto [n, _] = co_await qp->recv(warmup_recv, sizeof(warmup_recv));
   std::cout << "Connection warmed up, received " << n << " bytes" << std::endl;
+
+  // Test with a small write first (like helloworld) to verify write_with_imm works
+  rdmapp::remote_mr test_remote_mr(
+      reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(remote_mr.addr())),
+      static_cast<uint32_t>(6), remote_mr.rkey());
+  char test_data[6] = "test";
+  std::cout << "Testing small write_with_imm first..." << std::endl;
+  std::cout.flush();
+  co_await qp->write_with_imm(test_remote_mr, test_data, 6, 999);
+  std::cout << "Small write completed, proceeding with chunks..." << std::endl;
 
   for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
     size_t chunk_offset = chunk_idx * DEFAULT_CHUNK_SIZE;
