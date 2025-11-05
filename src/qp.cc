@@ -53,7 +53,7 @@ qp::qp(std::shared_ptr<rdmapp::pd> pd, std::shared_ptr<cq> cq,
 qp::qp(std::shared_ptr<rdmapp::pd> pd, std::shared_ptr<cq> recv_cq,
        std::shared_ptr<cq> send_cq, std::shared_ptr<srq> srq)
     : qp_(nullptr), pd_(pd), recv_cq_(recv_cq), send_cq_(send_cq), srq_(srq) {
-  create();
+  create_mlx5();
   init();
 }
 
@@ -98,6 +98,59 @@ void qp::create() {
   check_ptr(qp_, "failed to create qp");
   sq_psn_ = next_sq_psn.fetch_add(1);
   RDMAPP_LOG_TRACE("created qp %p lid=%u qpn=%u psn=%u",
+                   reinterpret_cast<void *>(qp_), pd_->device_ptr()->lid(),
+                   qp_->qp_num, sq_psn_);
+}
+
+void qp::create_mlx5() {
+  struct ibv_qp_init_attr qp_init_attr = {};
+  ::bzero(&qp_init_attr, sizeof(qp_init_attr));
+  qp_init_attr.qp_type = IBV_QPT_RC;          // change to IBV_QPT_UC if we switch to UC
+  qp_init_attr.recv_cq = recv_cq_->cq_;
+  qp_init_attr.send_cq = send_cq_->cq_;
+  qp_init_attr.cap.max_recv_sge = 1;
+  qp_init_attr.cap.max_send_sge = 1;
+  qp_init_attr.cap.max_recv_wr  = 128;
+  qp_init_attr.cap.max_send_wr  = 128;
+  qp_init_attr.sq_sig_all = 0;
+  qp_init_attr.qp_context = this;
+
+  if (srq_ != nullptr) {
+    qp_init_attr.srq = srq_->srq_;
+    raw_srq_ = srq_->srq_;
+    post_recv_fn = &qp::post_recv_srq;
+  } else {
+    post_recv_fn = &qp::post_recv_rq;
+  }
+
+  struct ibv_qp_init_attr_ex ex = {};
+  ex.qp_type    = qp_init_attr.qp_type;
+  ex.send_cq    = qp_init_attr.send_cq;
+  ex.recv_cq    = qp_init_attr.recv_cq;
+  ex.cap        = qp_init_attr.cap;
+  ex.sq_sig_all = qp_init_attr.sq_sig_all;
+  ex.qp_context = qp_init_attr.qp_context;
+  ex.comp_mask  = IBV_QP_INIT_ATTR_PD;  
+  ex.pd         = pd_->pd_;
+  if (srq_ != nullptr) {
+    ex.comp_mask |= IBV_QP_INIT_ATTR_SRQ;
+    ex.srq = raw_srq_;
+  }
+  struct mlx5dv_qp_init_attr dv = {};
+  dv.comp_mask   = MLX5DV_QP_INIT_ATTR_MASK_QP_CREATE_FLAGS;
+  dv.create_flags = MLX5DV_QP_CREATE_DISABLE_SCATTER_TO_CQE;
+
+  ibv_context* ctx = pd_->pd_->context;
+  qp_ = mlx5dv_create_qp(ctx, &ex, &dv);
+  if (!qp_) {
+    RDMAPP_LOG_TRACE("mlx5dv_create_qp failed (%s), falling back to ibv_create_qp",
+                     strerror(errno));
+    qp_ = ::ibv_create_qp(pd_->pd_, &qp_init_attr);
+  }
+
+  check_ptr(qp_, "failed to create qp");
+  sq_psn_ = next_sq_psn.fetch_add(1);
+  RDMAPP_LOG_TRACE("created (mlx5) qp %p lid=%u qpn=%u psn=%u",
                    reinterpret_cast<void *>(qp_), pd_->device_ptr()->lid(),
                    qp_->qp_num, sq_psn_);
 }
