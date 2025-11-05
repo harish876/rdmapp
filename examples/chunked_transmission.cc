@@ -13,7 +13,7 @@
 #include <rdmapp/rdmapp.h>
 
 constexpr size_t DEFAULT_BUFFER_SIZE = 4096;
-constexpr size_t DEFAULT_CHUNK_SIZE = 1500;
+constexpr size_t DEFAULT_CHUNK_SIZE = 1024;
 
 rdmapp::task<void> handle_qp(std::shared_ptr<rdmapp::qp> qp,
                              size_t buffer_size) {
