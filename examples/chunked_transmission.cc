@@ -15,7 +15,8 @@
 constexpr size_t DEFAULT_BUFFER_SIZE = 4096;
 constexpr size_t DEFAULT_CHUNK_SIZE = 1500;
 
-rdmapp::task<void> handle_qp(std::shared_ptr<rdmapp::qp> qp, size_t buffer_size) {
+rdmapp::task<void> handle_qp(std::shared_ptr<rdmapp::qp> qp,
+                             size_t buffer_size) {
   std::vector<uint8_t> recv_buffer(buffer_size);
   auto recv_mr = std::make_shared<rdmapp::local_mr>(
       qp->pd_ptr()->reg_mr(recv_buffer.data(), recv_buffer.size()));
@@ -33,7 +34,8 @@ rdmapp::task<void> handle_qp(std::shared_ptr<rdmapp::qp> qp, size_t buffer_size)
             << " length=" << remote_mr.length() << " rkey=" << remote_mr.rkey()
             << std::endl;
 
-  size_t num_chunks = (buffer_size + DEFAULT_CHUNK_SIZE - 1) / DEFAULT_CHUNK_SIZE;
+  size_t num_chunks =
+      (buffer_size + DEFAULT_CHUNK_SIZE - 1) / DEFAULT_CHUNK_SIZE;
   std::cout << "Receiving " << buffer_size << " bytes in " << num_chunks
             << " chunks via one-sided RDMA writes" << std::endl;
 
@@ -86,9 +88,11 @@ rdmapp::task<void> client(rdmapp::connector &connector, size_t buffer_size) {
             << " length=" << send_mr->length() << " rkey=" << send_mr->rkey()
             << std::endl;
 
-  size_t num_chunks = (buffer_size + DEFAULT_CHUNK_SIZE - 1) / DEFAULT_CHUNK_SIZE;
+  size_t num_chunks =
+      (buffer_size + DEFAULT_CHUNK_SIZE - 1) / DEFAULT_CHUNK_SIZE;
   std::cout << "Sending " << buffer_size << " bytes in " << num_chunks
-            << " chunks of " << DEFAULT_CHUNK_SIZE << " bytes each via one-sided RDMA writes" << std::endl;
+            << " chunks of " << DEFAULT_CHUNK_SIZE
+            << " bytes each via one-sided RDMA writes" << std::endl;
 
   for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
     size_t chunk_offset = chunk_idx * DEFAULT_CHUNK_SIZE;
@@ -101,8 +105,8 @@ rdmapp::task<void> client(rdmapp::connector &connector, size_t buffer_size) {
         static_cast<uint32_t>(chunk_length), remote_mr.rkey());
 
     // Single sided writes
-    co_await qp->write(chunk_remote_mr,
-                      send_buffer.data() + chunk_offset, chunk_length);
+    co_await qp->write(chunk_remote_mr, send_buffer.data() + chunk_offset,
+                       chunk_length);
 
     std::cout << "Sent chunk " << chunk_idx << ": offset=" << chunk_offset
               << " length=" << chunk_length << std::endl;
@@ -123,7 +127,7 @@ int main(int argc, char *argv[]) {
 
   size_t buffer_size = DEFAULT_BUFFER_SIZE;
 
-  auto device = std::make_shared<rdmapp::device>(0, 1);
+  auto device = std::make_shared<rdmapp::device>(0, 1, 3);
   auto pd = std::make_shared<rdmapp::pd>(device);
   auto cq = std::make_shared<rdmapp::cq>(device);
   auto cq_poller = std::make_shared<rdmapp::cq_poller>(cq);
@@ -134,7 +138,7 @@ int main(int argc, char *argv[]) {
     rdmapp::acceptor acceptor(loop, std::stoi(argv[1]), pd, cq);
     server(acceptor, buffer_size);
   } else if (argc == 3) {
-    if (std::string(argv[1]).find('.') != std::string::npos || 
+    if (std::string(argv[1]).find('.') != std::string::npos ||
         std::string(argv[1]).find(':') != std::string::npos) {
       rdmapp::connector connector(loop, argv[1], std::stoi(argv[2]), pd, cq);
       client(connector, buffer_size);
@@ -148,9 +152,12 @@ int main(int argc, char *argv[]) {
     rdmapp::connector connector(loop, argv[1], std::stoi(argv[2]), pd, cq);
     client(connector, buffer_size);
   } else {
-    std::cout << "Usage: " << argv[0] << " [port] [buffer_size] for server" << std::endl;
-    std::cout << "       " << argv[0] << " [server_ip] [port] [buffer_size] for client" << std::endl;
-    std::cout << "       buffer_size defaults to " << DEFAULT_BUFFER_SIZE << " bytes" << std::endl;
+    std::cout << "Usage: " << argv[0] << " [port] [buffer_size] for server"
+              << std::endl;
+    std::cout << "       " << argv[0]
+              << " [server_ip] [port] [buffer_size] for client" << std::endl;
+    std::cout << "       buffer_size defaults to " << DEFAULT_BUFFER_SIZE
+              << " bytes" << std::endl;
   }
 
   loop->close();
