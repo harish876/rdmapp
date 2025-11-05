@@ -39,6 +39,13 @@ rdmapp::task<void> handle_qp(std::shared_ptr<rdmapp::qp> qp,
   std::cout << "Receiving " << buffer_size << " bytes in " << num_chunks
             << " chunks via RDMA write_with_imm" << std::endl;
 
+  // Warm up the connection with a small send/recv (like helloworld does)
+  char warmup_buffer[6];
+  auto [warmup_n, __] = co_await qp->recv(warmup_buffer, sizeof(warmup_buffer));
+  char warmup_send[6] = "world";
+  co_await qp->send(warmup_send, sizeof(warmup_send));
+  std::cout << "Connection warmed up, received " << warmup_n << " bytes" << std::endl;
+
   // Post one receive for each chunk (each chunk uses write_with_imm)
   for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
     auto [_, imm] = co_await qp->recv(recv_mr);
@@ -98,6 +105,13 @@ rdmapp::task<void> client(rdmapp::connector &connector, size_t buffer_size) {
             << " chunks of " << DEFAULT_CHUNK_SIZE
             << " bytes each via RDMA write_with_imm" << std::endl;
 
+  // Warm up the connection with a small send/recv (like helloworld does)
+  char warmup_buffer[6] = "hello";
+  co_await qp->send(warmup_buffer, sizeof(warmup_buffer));
+  char warmup_recv[6];
+  auto [n, _] = co_await qp->recv(warmup_recv, sizeof(warmup_recv));
+  std::cout << "Connection warmed up, received " << n << " bytes" << std::endl;
+
   for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
     size_t chunk_offset = chunk_idx * DEFAULT_CHUNK_SIZE;
     size_t chunk_length =
@@ -107,6 +121,9 @@ rdmapp::task<void> client(rdmapp::connector &connector, size_t buffer_size) {
         reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(remote_mr.addr()) +
                                  chunk_offset),
         static_cast<uint32_t>(chunk_length), remote_mr.rkey());
+
+    std::cout << "Writing chunk " << chunk_idx << "..." << std::endl;
+    std::cout.flush();
 
     // Use write_with_imm for each chunk (imm value is the chunk index)
     co_await qp->write_with_imm(chunk_remote_mr,
