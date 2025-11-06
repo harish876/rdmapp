@@ -16,7 +16,8 @@ constexpr size_t DEFAULT_BUFFER_SIZE = 4096;
 constexpr size_t DEFAULT_CHUNK_SIZE = 1024;
 
 rdmapp::task<void> handle_qp(std::shared_ptr<rdmapp::qp> qp,
-                             size_t buffer_size) {
+                             size_t buffer_size,
+                             size_t chunk_size) {
   std::vector<uint8_t> recv_buffer(buffer_size);
   auto recv_mr = std::make_shared<rdmapp::local_mr>(
       qp->pd_ptr()->reg_mr(recv_buffer.data(), recv_buffer.size()));
@@ -35,7 +36,7 @@ rdmapp::task<void> handle_qp(std::shared_ptr<rdmapp::qp> qp,
             << std::endl;
 
   size_t num_chunks =
-      (buffer_size + DEFAULT_CHUNK_SIZE - 1) / DEFAULT_CHUNK_SIZE;
+      (buffer_size + chunk_size - 1) / chunk_size;
   std::cout << "Receiving " << buffer_size << " bytes in " << num_chunks
             << " chunks via one-sided RDMA writes" << std::endl;
 
@@ -56,15 +57,15 @@ rdmapp::task<void> handle_qp(std::shared_ptr<rdmapp::qp> qp,
   co_return;
 }
 
-rdmapp::task<void> server(rdmapp::acceptor &acceptor, size_t buffer_size) {
+rdmapp::task<void> server(rdmapp::acceptor &acceptor, size_t buffer_size, size_t chunk_size) {
   while (true) {
     auto qp = co_await acceptor.accept();
-    handle_qp(qp, buffer_size).detach();
+    handle_qp(qp, buffer_size, chunk_size).detach();
   }
   co_return;
 }
 
-rdmapp::task<void> client(rdmapp::connector &connector, size_t buffer_size) {
+rdmapp::task<void> client(rdmapp::connector &connector, size_t buffer_size, size_t chunk_size) {
   auto qp = co_await connector.connect();
 
   char remote_mr_serialized[rdmapp::remote_mr::kSerializedSize];
@@ -89,15 +90,15 @@ rdmapp::task<void> client(rdmapp::connector &connector, size_t buffer_size) {
             << std::endl;
 
   size_t num_chunks =
-      (buffer_size + DEFAULT_CHUNK_SIZE - 1) / DEFAULT_CHUNK_SIZE;
+      (buffer_size + chunk_size - 1) / chunk_size;
   std::cout << "Sending " << buffer_size << " bytes in " << num_chunks
-            << " chunks of " << DEFAULT_CHUNK_SIZE
+            << " chunks of " << chunk_size
             << " bytes each via one-sided RDMA writes" << std::endl;
 
   for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
-    size_t chunk_offset = chunk_idx * DEFAULT_CHUNK_SIZE;
+    size_t chunk_offset = chunk_idx * chunk_size;
     size_t chunk_length =
-        std::min(DEFAULT_CHUNK_SIZE, buffer_size - chunk_offset);
+        std::min(chunk_size, buffer_size - chunk_offset);
 
     rdmapp::remote_mr chunk_remote_mr(
         reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(remote_mr.addr()) +
@@ -133,6 +134,7 @@ int main(int argc, char *argv[]) {
   srand(42);
 
   size_t buffer_size = DEFAULT_BUFFER_SIZE;
+  size_t chunk_size = DEFAULT_CHUNK_SIZE;
 
   auto device = std::make_shared<rdmapp::device>(0, 1, 3);
   auto pd = std::make_shared<rdmapp::pd>(device);
@@ -142,28 +144,49 @@ int main(int argc, char *argv[]) {
   auto looper = std::thread([loop]() { loop->loop(); });
 
   if (argc == 2) {
+    // Server: [port]
     rdmapp::acceptor acceptor(loop, std::stoi(argv[1]), pd, cq);
-    server(acceptor, buffer_size);
+    server(acceptor, buffer_size, chunk_size);
   } else if (argc == 3) {
     if (std::string(argv[1]).find('.') != std::string::npos ||
         std::string(argv[1]).find(':') != std::string::npos) {
+      // Client: [server_ip] [port]
       rdmapp::connector connector(loop, argv[1], std::stoi(argv[2]), pd, cq);
-      client(connector, buffer_size);
+      client(connector, buffer_size, chunk_size);
     } else {
+      // Server: [port] [buffer_size]
       buffer_size = std::stoull(argv[2]);
       rdmapp::acceptor acceptor(loop, std::stoi(argv[1]), pd, cq);
-      server(acceptor, buffer_size);
+      server(acceptor, buffer_size, chunk_size);
     }
   } else if (argc == 4) {
+    if (std::string(argv[1]).find('.') != std::string::npos ||
+        std::string(argv[1]).find(':') != std::string::npos) {
+      // Client: [server_ip] [port] [buffer_size]
+      buffer_size = std::stoull(argv[3]);
+      rdmapp::connector connector(loop, argv[1], std::stoi(argv[2]), pd, cq);
+      client(connector, buffer_size, chunk_size);
+    } else {
+      // Server: [port] [buffer_size] [chunk_size]
+      buffer_size = std::stoull(argv[2]);
+      chunk_size = std::stoull(argv[3]);
+      rdmapp::acceptor acceptor(loop, std::stoi(argv[1]), pd, cq);
+      server(acceptor, buffer_size, chunk_size);
+    }
+  } else if (argc == 5) {
+    // Client: [server_ip] [port] [buffer_size] [chunk_size]
     buffer_size = std::stoull(argv[3]);
+    chunk_size = std::stoull(argv[4]);
     rdmapp::connector connector(loop, argv[1], std::stoi(argv[2]), pd, cq);
-    client(connector, buffer_size);
+    client(connector, buffer_size, chunk_size);
   } else {
-    std::cout << "Usage: " << argv[0] << " [port] [buffer_size] for server"
+    std::cout << "Usage: " << argv[0] << " [port] [buffer_size] [chunk_size] for server"
               << std::endl;
     std::cout << "       " << argv[0]
-              << " [server_ip] [port] [buffer_size] for client" << std::endl;
+              << " [server_ip] [port] [buffer_size] [chunk_size] for client" << std::endl;
     std::cout << "       buffer_size defaults to " << DEFAULT_BUFFER_SIZE
+              << " bytes" << std::endl;
+    std::cout << "       chunk_size defaults to " << DEFAULT_CHUNK_SIZE
               << " bytes" << std::endl;
   }
 
