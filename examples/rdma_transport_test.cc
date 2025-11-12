@@ -73,11 +73,13 @@ int main(int argc, char *argv[]) {
     auto device = std::make_shared<rdmapp::device>(0, 1, 3);
     auto pd = std::make_shared<rdmapp::pd>(device);
     // Use a single shared CQ for both sends and receives
-    // cq_poller will poll it for send completions (with callback pointers in wr_id)
-    // RDMAReceiver will also poll it directly for receive completions (with wr_id=0)
-    // We filter in process_completions() to only process wr_id==0 completions
+    // NOTE: We do NOT use cq_poller because it would consume our receive completions
+    // RDMAReceiver's process_completions() will handle ALL completions:
+    //   - Receive completions (with marker) -> process normally
+    //   - Send completions (with callbacks) -> manually invoke callbacks
     auto cq = std::make_shared<rdmapp::cq>(device);
-    auto cq_poller = std::make_shared<rdmapp::cq_poller>(cq);
+    // DO NOT create cq_poller - process_completions() handles everything
+    // auto cq_poller = std::make_shared<rdmapp::cq_poller>(cq);
     auto loop = rdmapp::socket::event_loop::new_loop();
     auto looper = std::thread([loop]() { loop->loop(); });
     

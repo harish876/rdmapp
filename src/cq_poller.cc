@@ -39,7 +39,12 @@ void cq_poller::worker() {
         
         // Skip receive completions with our special marker value
         // These are handled by RDMAReceiver's process_completions() thread
+        // NOTE: We still consume these completions from the CQ by polling, but we don't process them
+        // This means RDMAReceiver's process_completions() won't see them either!
+        // We need to NOT poll these completions at all, but we can't do that with the current API.
+        // The solution is to have RDMAReceiver poll more aggressively, or to not use cq_poller on the shared CQ.
         if (wc.wr_id == RECV_MARKER) {
+          RDMAPP_LOG_TRACE("cq_poller: skipping receive completion with marker (consumed from CQ)");
           continue;
         }
         

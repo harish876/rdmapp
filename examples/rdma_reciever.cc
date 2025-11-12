@@ -274,7 +274,15 @@ void RDMAReceiver::process_completions() {
     size_t total_polled = 0;
     size_t total_with_imm = 0;
     
+    // Poll very aggressively - we need to get completions before cq_poller does
+    // because cq_poller will consume them from the CQ even if it skips processing
+    int poll_iterations = 0;
     while (!stop_thread_) {
+        poll_iterations++;
+        if (poll_iterations % 100000 == 0) {
+            std::cout << "[BACKEND] Still polling... (iteration " << poll_iterations << ")" << std::endl;
+        }
+        
         // Poll the completion queue
         if (!recv_cq_) {
             std::cerr << "Receiver: recv_cq_ is null!" << std::endl;
@@ -285,19 +293,29 @@ void RDMAReceiver::process_completions() {
         
         if (num_completions > 0) {
             std::cout << "[BACKEND] Polled " << num_completions << " completions (total polled: " 
-                      << total_polled << ")" << std::endl;
+                      << total_polled << ", iteration " << poll_iterations << ")" << std::endl;
         }
         
         for (size_t i = 0; i < num_completions; ++i) {
             const auto& wc = wc_vec[i];
             
-            // Only process receive completions with our special marker value
-            // Send completions are handled by cq_poller (which now skips our marker)
+            // Process ALL completions since we're not using cq_poller
+            // Receive completions have our marker, send completions have callback pointers
             constexpr uint64_t RECV_MARKER = 0xFFFFFFFFFFFFFFFFULL;
             
             if (wc.wr_id != RECV_MARKER) {
-                // This is a send completion - skip it, cq_poller will handle it
-                continue;
+                // This is a send completion with a callback pointer
+                // Manually invoke the callback (since we're not using cq_poller)
+                try {
+                    auto cb = reinterpret_cast<rdmapp::executor::callback_ptr>(wc.wr_id);
+                    (*cb)(wc);
+                    // Destroy the callback after invocation (same as executor does)
+                    rdmapp::executor::destroy_callback(cb);
+                } catch (...) {
+                    // If callback invocation fails, log and continue
+                    std::cerr << "[BACKEND] Warning - failed to invoke callback for send completion" << std::endl;
+                }
+                continue; // Skip to next completion
             }
             
             // Verify this is actually a receive completion
