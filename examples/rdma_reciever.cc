@@ -162,21 +162,25 @@ rdmapp::task<void> RDMAReceiver::post_receives(size_t count) {
 }
 
 void RDMAReceiver::post_single_receive() {
+    // Create local copies of shared_ptrs to ensure they stay alive during the operation
+    auto mr = dummy_recv_mr_;
+    auto qp = qp_;
+    
     // Check if dummy_recv_mr_ and qp_ are initialized
-    if (!dummy_recv_mr_) {
+    if (!mr) {
         std::cerr << "Receiver: Error - dummy_recv_mr_ not initialized!" << std::endl;
         return;
     }
     
-    if (!qp_) {
+    if (!qp) {
         std::cerr << "Receiver: Error - qp_ not initialized!" << std::endl;
         return;
     }
     
     struct ibv_sge recv_sge;
-    recv_sge.addr = reinterpret_cast<uint64_t>(dummy_recv_mr_->addr());
-    recv_sge.length = dummy_recv_mr_->length();
-    recv_sge.lkey = dummy_recv_mr_->lkey();
+    recv_sge.addr = reinterpret_cast<uint64_t>(mr->addr());
+    recv_sge.length = mr->length();
+    recv_sge.lkey = mr->lkey();
     
     struct ibv_recv_wr recv_wr = {};
     struct ibv_recv_wr *bad_recv_wr = nullptr;
@@ -186,19 +190,21 @@ void RDMAReceiver::post_single_receive() {
     recv_wr.sg_list = &recv_sge;
     
     try {
-        qp_->post_recv(recv_wr, bad_recv_wr);
+        qp->post_recv(recv_wr, bad_recv_wr);
     } catch (const std::exception& e) {
         std::cerr << "Receiver: Failed to post receive: " << e.what() << std::endl;
         // Don't throw - just log, we'll try again later
+    } catch (...) {
+        std::cerr << "Receiver: Unknown exception in post_recv!" << std::endl;
     }
 }
 
 void RDMAReceiver::process_completions() {
     std::cout << "Receiver: Completion thread started" << std::endl;
     
-    // Wait a bit to ensure dummy_recv_mr_ and recv_cq_ are initialized
+    // Wait a bit to ensure dummy_recv_mr_, recv_cq_, and packet_bitmap_ are initialized
     // This is a safety measure - post_receives() should complete before threads start
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     
     if (!dummy_recv_mr_) {
         std::cerr << "Receiver: FATAL - dummy_recv_mr_ not initialized in completion thread!" << std::endl;
@@ -209,6 +215,14 @@ void RDMAReceiver::process_completions() {
         std::cerr << "Receiver: FATAL - recv_cq_ not initialized in completion thread!" << std::endl;
         return;
     }
+    
+    if (packet_bitmap_.empty()) {
+        std::cerr << "Receiver: FATAL - packet_bitmap_ is empty in completion thread!" << std::endl;
+        return;
+    }
+    
+    std::cout << "Receiver: Completion thread ready - packet_bitmap_.size()=" 
+              << packet_bitmap_.size() << ", total_packets_=" << total_packets_ << std::endl;
     
     constexpr size_t batch_size = 32;
     std::vector<struct ibv_wc> wc_vec(batch_size);
@@ -281,10 +295,22 @@ void RDMAReceiver::process_completions() {
                 // Each bitmap entry represents 16 packets
                 size_t bitmap_idx = packet_idx / 16;
                 
-                // Safety check
+                // Safety checks - ensure packet_bitmap_ is valid and index is in range
+                if (packet_bitmap_.empty()) {
+                    std::cerr << "Receiver: FATAL - packet_bitmap_ is empty!" << std::endl;
+                    if (dummy_recv_mr_) {
+                        post_single_receive();
+                    }
+                    continue;
+                }
+                
                 if (bitmap_idx >= packet_bitmap_.size()) {
                     std::cerr << "Receiver: FATAL - bitmap_idx " << bitmap_idx 
-                              << " >= packet_bitmap_.size() " << packet_bitmap_.size() << std::endl;
+                              << " >= packet_bitmap_.size() " << packet_bitmap_.size() 
+                              << " (packet_idx=" << packet_idx << ")" << std::endl;
+                    if (dummy_recv_mr_) {
+                        post_single_receive();
+                    }
                     continue;
                 }
                 
