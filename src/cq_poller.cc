@@ -25,6 +25,10 @@ cq_poller::~cq_poller() {
 }
 
 void cq_poller::worker() {
+  // Marker value used by RDMAReceiver for receive completions
+  // We skip these completions because they're handled by RDMAReceiver's process_completions()
+  constexpr uint64_t RECV_MARKER = 0xFFFFFFFFFFFFFFFFULL;
+  
   while (!stopped_) {
     try {
       auto nr_wc = cq_->poll(wc_vec_);
@@ -32,6 +36,13 @@ void cq_poller::worker() {
         auto &wc = wc_vec_[i];
         RDMAPP_LOG_TRACE("polled cqe wr_id=%p status=%d",
                          reinterpret_cast<void *>(wc.wr_id), wc.status);
+        
+        // Skip receive completions with our special marker value
+        // These are handled by RDMAReceiver's process_completions() thread
+        if (wc.wr_id == RECV_MARKER) {
+          continue;
+        }
+        
         executor_->process_wc(wc);
       }
     } catch (std::runtime_error &e) {
