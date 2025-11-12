@@ -63,8 +63,22 @@ rdmapp::task<std::vector<uint8_t>> RDMAReceiver::receive_data(size_t expected_si
     // Must post before sending CTS
     co_await post_receives(total_packets_ + 10); // Extra for safety
     
+    // Verify dummy_recv_mr_ is set
+    if (!dummy_recv_mr_) {
+        std::cerr << "Receiver: ERROR - dummy_recv_mr_ not set after post_receives!" << std::endl;
+        throw std::runtime_error("dummy_recv_mr_ not initialized");
+    }
+    std::cout << "Receiver: Verified dummy_recv_mr_ is set (addr=0x" << std::hex 
+              << reinterpret_cast<uint64_t>(dummy_recv_mr_->addr()) << std::dec 
+              << ", length=" << dummy_recv_mr_->length() << ")" << std::endl;
+    
     // Send CTS to sender
     co_await send_cts(expected_size);
+    
+    // Verify all member variables are ready before starting threads
+    std::cout << "Receiver: Pre-thread checks - packet_bitmap_.size()=" << packet_bitmap_.size()
+              << ", total_packets_=" << total_packets_ 
+              << ", total_chunks_=" << total_chunks_ << std::endl;
     
     // Start background threads for processing completions and frontend polling
     std::cout << "Receiver: Starting completion thread..." << std::endl;
@@ -375,25 +389,35 @@ void RDMAReceiver::process_completions() {
 
 void RDMAReceiver::frontend_poller() {
     // Use std::cout with flush to ensure output appears immediately
+    // Try to print before accessing any member variables
     std::cout << "[FRONTEND] Frontend poller thread started" << std::flush << std::endl;
+    std::cout << "[FRONTEND] Thread ID: " << std::this_thread::get_id() << std::flush << std::endl;
     
     // Add a try-catch to catch any exceptions
     try {
+        std::cout << "[FRONTEND] Entered try block" << std::flush << std::endl;
+        
         // Wait a bit to ensure packet_bitmap_ is initialized
         std::cout << "[FRONTEND] About to sleep..." << std::flush << std::endl;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         std::cout << "[FRONTEND] After initial sleep" << std::flush << std::endl;
         
-        // Check if we can access member variables safely
-        std::cout << "[FRONTEND] Checking member variables..." << std::flush << std::endl;
+        // Check if we can access member variables safely - do this one at a time
+        std::cout << "[FRONTEND] Checking stop_thread_..." << std::flush << std::endl;
         bool stop = stop_thread_.load(std::memory_order_acquire);
         std::cout << "[FRONTEND] stop_thread_=" << stop << std::flush << std::endl;
         
+        std::cout << "[FRONTEND] Checking total_packets_..." << std::flush << std::endl;
         size_t total = total_packets_;
         std::cout << "[FRONTEND] total_packets_=" << total << std::flush << std::endl;
         
+        std::cout << "[FRONTEND] Checking packet_bitmap_..." << std::flush << std::endl;
         size_t bmp_size = packet_bitmap_.size();
         std::cout << "[FRONTEND] packet_bitmap_.size()=" << bmp_size << std::flush << std::endl;
+        
+        std::cout << "[FRONTEND] Checking config_.chunk_size..." << std::flush << std::endl;
+        size_t chunk_size = config_.chunk_size;
+        std::cout << "[FRONTEND] config_.chunk_size=" << chunk_size << std::flush << std::endl;
         
     } catch (const std::exception& e) {
         std::cerr << "[FRONTEND] Exception in frontend_poller: " << e.what() << std::endl;
