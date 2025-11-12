@@ -162,6 +162,17 @@ rdmapp::task<void> RDMAReceiver::post_receives(size_t count) {
 }
 
 void RDMAReceiver::post_single_receive() {
+    // Check if dummy_recv_mr_ and qp_ are initialized
+    if (!dummy_recv_mr_) {
+        std::cerr << "Receiver: Error - dummy_recv_mr_ not initialized!" << std::endl;
+        return;
+    }
+    
+    if (!qp_) {
+        std::cerr << "Receiver: Error - qp_ not initialized!" << std::endl;
+        return;
+    }
+    
     struct ibv_sge recv_sge;
     recv_sge.addr = reinterpret_cast<uint64_t>(dummy_recv_mr_->addr());
     recv_sge.length = dummy_recv_mr_->length();
@@ -185,6 +196,20 @@ void RDMAReceiver::post_single_receive() {
 void RDMAReceiver::process_completions() {
     std::cout << "Receiver: Completion thread started" << std::endl;
     
+    // Wait a bit to ensure dummy_recv_mr_ and recv_cq_ are initialized
+    // This is a safety measure - post_receives() should complete before threads start
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    
+    if (!dummy_recv_mr_) {
+        std::cerr << "Receiver: FATAL - dummy_recv_mr_ not initialized in completion thread!" << std::endl;
+        return;
+    }
+    
+    if (!recv_cq_) {
+        std::cerr << "Receiver: FATAL - recv_cq_ not initialized in completion thread!" << std::endl;
+        return;
+    }
+    
     constexpr size_t batch_size = 32;
     std::vector<struct ibv_wc> wc_vec(batch_size);
     size_t total_polled = 0;
@@ -192,6 +217,10 @@ void RDMAReceiver::process_completions() {
     
     while (!stop_thread_) {
         // Poll the completion queue
+        if (!recv_cq_) {
+            std::cerr << "Receiver: recv_cq_ is null!" << std::endl;
+            break;
+        }
         size_t num_completions = recv_cq_->poll(wc_vec);
         total_polled += num_completions;
         
@@ -207,6 +236,10 @@ void RDMAReceiver::process_completions() {
             if (wc.status != IBV_WC_SUCCESS) {
                 std::cout << "Receiver: Completion error: status=" << wc.status 
                           << ", opcode=" << wc.opcode << std::endl;
+                // Still repost receive even on error
+                if (dummy_recv_mr_) {
+                    post_single_receive();
+                }
                 continue;
             }
             
@@ -226,6 +259,10 @@ void RDMAReceiver::process_completions() {
                 if (msg_id != current_msg_id_ - 1) {
                     std::cout << "Receiver: Warning - message ID mismatch: expected " 
                               << (current_msg_id_ - 1) << ", got " << msg_id << std::endl;
+                    // Still repost receive
+                    if (dummy_recv_mr_) {
+                        post_single_receive();
+                    }
                     continue;
                 }
                 
@@ -233,12 +270,23 @@ void RDMAReceiver::process_completions() {
                 if (packet_idx >= total_packets_) {
                     std::cout << "Receiver: Warning - invalid packet index: " 
                               << packet_idx << " (max: " << total_packets_ << ")" << std::endl;
+                    // Still repost receive
+                    if (dummy_recv_mr_) {
+                        post_single_receive();
+                    }
                     continue;
                 }
                 
                 // Get the bitmap entry index (packet_idx / 16)
                 // Each bitmap entry represents 16 packets
                 size_t bitmap_idx = packet_idx / 16;
+                
+                // Safety check
+                if (bitmap_idx >= packet_bitmap_.size()) {
+                    std::cerr << "Receiver: FATAL - bitmap_idx " << bitmap_idx 
+                              << " >= packet_bitmap_.size() " << packet_bitmap_.size() << std::endl;
+                    continue;
+                }
                 
                 // Set the bit atomically using fetch_or
                 uint16_t bit_mask = 1U << (packet_idx % 16);
@@ -253,13 +301,17 @@ void RDMAReceiver::process_completions() {
                 }
                 
                 // Repost a receive to replace the one we just consumed
-                post_single_receive();
+                if (dummy_recv_mr_) {
+                    post_single_receive();
+                }
             } else {
                 std::cout << "Receiver: Completion without IMM: opcode=" << wc.opcode 
                           << ", byte_len=" << wc.byte_len << std::endl;
                 
                 // Repost a receive even for non-IMM completions
-                post_single_receive();
+                if (dummy_recv_mr_) {
+                    post_single_receive();
+                }
             }
         }
         
@@ -286,7 +338,16 @@ void RDMAReceiver::process_completions() {
 void RDMAReceiver::frontend_poller() {
     std::cout << "Receiver: Frontend poller thread started" << std::endl;
     
+    // Wait a bit to ensure packet_bitmap_ is initialized
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    
     while (!stop_thread_) {
+        // Safety check
+        if (packet_bitmap_.empty() || total_packets_ == 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+        
         // Poll the packet bitmap and update chunk bitmap
         // Check each packet bitmap entry
         for (size_t i = 0; i < packet_bitmap_.size(); ++i) {
@@ -323,6 +384,12 @@ void RDMAReceiver::frontend_poller() {
                         size_t bmp_idx = p / 16;
                         size_t bit_pos = p % 16;
                         uint16_t bit_mask = 1U << bit_pos;
+                        
+                        // Safety check
+                        if (bmp_idx >= packet_bitmap_.size()) {
+                            chunk_complete = false;
+                            break;
+                        }
                         
                         uint16_t bmp_val = packet_bitmap_[bmp_idx].load(std::memory_order_acquire);
                         if ((bmp_val & bit_mask) == 0) {
