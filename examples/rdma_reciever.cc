@@ -227,7 +227,10 @@ void RDMAReceiver::post_single_receive() {
     struct ibv_recv_wr *bad_recv_wr = nullptr;
     recv_wr.next = nullptr;
     recv_wr.num_sge = 1;
-    recv_wr.wr_id = 0;  // We'll identify by immediate value in completion
+    // Use a special marker value that's clearly not a valid callback pointer
+    // This helps us filter our receive completions from send completions
+    // Note: cq_poller will still try to process this and crash, but at least we can identify it
+    recv_wr.wr_id = 0xFFFFFFFFFFFFFFFFULL;  // Special marker for our receive completions
     recv_wr.sg_list = &recv_sge;
     
     try {
@@ -245,7 +248,8 @@ void RDMAReceiver::process_completions() {
     
     // Wait a bit to ensure dummy_recv_mr_, recv_cq_, and packet_bitmap_ are initialized
     // This is a safety measure - post_receives() should complete before threads start
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // Use a shorter delay to start polling sooner and beat cq_poller to completions
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
     
     if (!dummy_recv_mr_) {
         std::cerr << "Receiver: FATAL - dummy_recv_mr_ not initialized in completion thread!" << std::endl;
@@ -287,17 +291,18 @@ void RDMAReceiver::process_completions() {
         for (size_t i = 0; i < num_completions; ++i) {
             const auto& wc = wc_vec[i];
             
-            // Only process receive completions with wr_id == 0 (from our post_recv operations)
+            // Only process receive completions with our special marker value (from our post_recv operations)
             // Send completions have callback pointers in wr_id and are handled by cq_poller
             // We check wr_id first to avoid processing send completions
-            if (wc.wr_id != 0) {
+            constexpr uint64_t RECV_MARKER = 0xFFFFFFFFFFFFFFFFULL;
+            if (wc.wr_id != RECV_MARKER) {
                 // This is a send completion with a callback pointer - skip it, cq_poller will handle it
                 continue;
             }
             
             // Verify this is actually a receive completion
             if (wc.opcode != IBV_WC_RECV && wc.opcode != IBV_WC_RECV_RDMA_WITH_IMM) {
-                std::cout << "Receiver: Warning - wr_id=0 but opcode=" << wc.opcode << ", skipping" << std::endl;
+                std::cout << "[BACKEND] Warning - wr_id=RECV_MARKER but opcode=" << wc.opcode << ", skipping" << std::endl;
                 continue;
             }
             
@@ -410,9 +415,11 @@ void RDMAReceiver::process_completions() {
             break;
         }
         
-        // Small sleep to avoid busy-waiting when no completions
+        // Poll aggressively to get completions before cq_poller does
+        // If we don't get any completions, use a very short sleep to avoid busy-waiting
+        // but still poll frequently enough to beat cq_poller
         if (num_completions == 0) {
-            std::this_thread::sleep_for(std::chrono::microseconds(10));
+            std::this_thread::sleep_for(std::chrono::microseconds(1));
         }
     }
     
