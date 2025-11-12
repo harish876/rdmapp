@@ -287,10 +287,17 @@ void RDMAReceiver::process_completions() {
         for (size_t i = 0; i < num_completions; ++i) {
             const auto& wc = wc_vec[i];
             
-            // Only process receive completions (from our post_recv operations)
-            // Send completions are handled by cq_poller on the send CQ
+            // Only process receive completions with wr_id == 0 (from our post_recv operations)
+            // Send completions have callback pointers in wr_id and are handled by cq_poller
+            // We check wr_id first to avoid processing send completions
+            if (wc.wr_id != 0) {
+                // This is a send completion with a callback pointer - skip it, cq_poller will handle it
+                continue;
+            }
+            
+            // Verify this is actually a receive completion
             if (wc.opcode != IBV_WC_RECV && wc.opcode != IBV_WC_RECV_RDMA_WITH_IMM) {
-                std::cout << "Receiver: Skipping non-receive completion: opcode=" << wc.opcode << std::endl;
+                std::cout << "Receiver: Warning - wr_id=0 but opcode=" << wc.opcode << ", skipping" << std::endl;
                 continue;
             }
             
