@@ -139,42 +139,47 @@ rdmapp::task<void> RDMAReceiver::post_receives(size_t count) {
     // In RDMA Write with Immediate, the immediate value comes in the receive completion
     // The actual data is written directly to memory via RDMA Write
     
-    std::cout << "Receiver: Posting " << count << " receives for immediates..." << std::endl;
-    
-    // Register a memory region for the dummy receive buffer if not already done
-    // We'll reuse the same buffer for all receives
+    // Register a memory region for the dummy receive buffer
     auto pd = qp_->pd_ptr();
-    auto dummy_mr = std::make_shared<rdmapp::local_mr>(
+    dummy_recv_mr_ = std::make_shared<rdmapp::local_mr>(
         pd->reg_mr(dummy_recv_buffer_.data(), dummy_recv_buffer_.size()));
     
-    // Post receives directly using the low-level API
-    for (size_t i = 0; i < count; ++i) {
-        struct ibv_sge recv_sge;
-        recv_sge.addr = reinterpret_cast<uint64_t>(dummy_mr->addr());
-        recv_sge.length = dummy_mr->length();
-        recv_sge.lkey = dummy_mr->lkey();
-        
-        struct ibv_recv_wr recv_wr = {};
-        struct ibv_recv_wr *bad_recv_wr = nullptr;
-        recv_wr.next = nullptr;
-        recv_wr.num_sge = 1;
-        recv_wr.wr_id = 0;  // We'll identify by immediate value in completion
-        recv_wr.sg_list = &recv_sge;
-        
-        try {
-            qp_->post_recv(recv_wr, bad_recv_wr);
-        } catch (const std::exception& e) {
-            std::cerr << "Receiver: Failed to post receive " << i << ": " << e.what() << std::endl;
-            throw;
-        }
+    // Post initial batch of receives (limited by queue capacity ~128)
+    // We'll repost receives as they're consumed in process_completions
+    constexpr size_t max_initial_receives = 128;
+    size_t initial_count = std::min(count, max_initial_receives);
+    
+    std::cout << "Receiver: Posting initial batch of " << initial_count 
+              << " receives (queue capacity limited, will repost as consumed)..." << std::endl;
+    
+    for (size_t i = 0; i < initial_count; ++i) {
+        post_single_receive();
     }
     
-    // Keep the MR alive
-    dummy_recv_mr_ = dummy_mr;
-    
-    std::cout << "Receiver: Posted " << count << " receives for immediates" << std::endl;
+    std::cout << "Receiver: Posted " << initial_count << " initial receives" << std::endl;
     
     co_return;
+}
+
+void RDMAReceiver::post_single_receive() {
+    struct ibv_sge recv_sge;
+    recv_sge.addr = reinterpret_cast<uint64_t>(dummy_recv_mr_->addr());
+    recv_sge.length = dummy_recv_mr_->length();
+    recv_sge.lkey = dummy_recv_mr_->lkey();
+    
+    struct ibv_recv_wr recv_wr = {};
+    struct ibv_recv_wr *bad_recv_wr = nullptr;
+    recv_wr.next = nullptr;
+    recv_wr.num_sge = 1;
+    recv_wr.wr_id = 0;  // We'll identify by immediate value in completion
+    recv_wr.sg_list = &recv_sge;
+    
+    try {
+        qp_->post_recv(recv_wr, bad_recv_wr);
+    } catch (const std::exception& e) {
+        std::cerr << "Receiver: Failed to post receive: " << e.what() << std::endl;
+        // Don't throw - just log, we'll try again later
+    }
 }
 
 void RDMAReceiver::process_completions() {
@@ -246,9 +251,15 @@ void RDMAReceiver::process_completions() {
                               << bitmap_idx << "] = 0x" << std::hex 
                               << (old_val | bit_mask) << std::dec << ")" << std::endl;
                 }
+                
+                // Repost a receive to replace the one we just consumed
+                post_single_receive();
             } else {
                 std::cout << "Receiver: Completion without IMM: opcode=" << wc.opcode 
                           << ", byte_len=" << wc.byte_len << std::endl;
+                
+                // Repost a receive even for non-IMM completions
+                post_single_receive();
             }
         }
         

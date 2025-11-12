@@ -30,8 +30,11 @@ private:
     // Send CTS to sender
     rdmapp::task<void> send_cts(size_t buffer_size);
     
-    // Post receive requests for immediates
+    // Post receive requests for immediates (initial batch)
     rdmapp::task<void> post_receives(size_t count);
+    
+    // Post a single receive (used to repost after consumption)
+    void post_single_receive();
     
     // Process incoming completions (runs in background thread)
     void process_completions();
