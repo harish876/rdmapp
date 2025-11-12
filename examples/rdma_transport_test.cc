@@ -72,8 +72,12 @@ int main(int argc, char *argv[]) {
     // Initialize RDMA device with GID index 3 (as in chunked_transmission.cc)
     auto device = std::make_shared<rdmapp::device>(0, 1, 3);
     auto pd = std::make_shared<rdmapp::pd>(device);
-    auto cq = std::make_shared<rdmapp::cq>(device);
-    auto cq_poller = std::make_shared<rdmapp::cq_poller>(cq);
+    // Create separate CQs for sends and receives to avoid conflicts
+    // cq_poller will only poll send_cq (for send completions with callbacks)
+    // recv_cq will be polled directly by RDMAReceiver (for receive completions)
+    auto send_cq = std::make_shared<rdmapp::cq>(device);
+    auto recv_cq = std::make_shared<rdmapp::cq>(device);
+    auto cq_poller = std::make_shared<rdmapp::cq_poller>(send_cq);  // Only poll send CQ
     auto loop = rdmapp::socket::event_loop::new_loop();
     auto looper = std::thread([loop]() { loop->loop(); });
     
@@ -88,7 +92,7 @@ int main(int argc, char *argv[]) {
             config.chunk_size = chunk_size;
             config.buffer_size = buffer_size * 2;
             
-            auto acceptor = std::make_shared<rdmapp::acceptor>(loop, port, pd, cq);
+            auto acceptor = std::make_shared<rdmapp::acceptor>(loop, port, pd, recv_cq, send_cq);
             
             // Directly use RDMASender
             rdmapp::task<void> sender_task = [acceptor, buffer_size, config]() -> rdmapp::task<void> {
@@ -136,11 +140,11 @@ int main(int argc, char *argv[]) {
                 config.chunk_size = chunk_size;
                 config.buffer_size = buffer_size * 2;
                 
-                auto connector = std::make_shared<rdmapp::connector>(loop, server_ip, port, pd, cq);
+                auto connector = std::make_shared<rdmapp::connector>(loop, server_ip, port, pd, recv_cq, send_cq);
                 
                 // Directly use RDMAReceiver
-                rdmapp::task<void> receiver_task = [connector, cq, buffer_size, config]() -> rdmapp::task<void> {
-                    RDMAReceiver receiver(connector, cq, config);
+                rdmapp::task<void> receiver_task = [connector, recv_cq, buffer_size, config]() -> rdmapp::task<void> {
+                    RDMAReceiver receiver(connector, recv_cq, config);
                     
                     std::cout << "\n=== RECEIVER STARTING ===" << std::endl;
                     std::cout << "Expecting " << buffer_size << " bytes" << std::endl;
@@ -185,8 +189,8 @@ int main(int argc, char *argv[]) {
                 
                 // Create acceptor and connector for loopback
                 int port = 12345;
-                auto acceptor = std::make_shared<rdmapp::acceptor>(loop, port, pd, cq);
-                auto connector = std::make_shared<rdmapp::connector>(loop, "127.0.0.1", port, pd, cq);
+                auto acceptor = std::make_shared<rdmapp::acceptor>(loop, port, pd, recv_cq, send_cq);
+                auto connector = std::make_shared<rdmapp::connector>(loop, "127.0.0.1", port, pd, recv_cq, send_cq);
                 
                 // Start sender in background
                 std::thread sender_thread([acceptor, buffer_size, config]() {
@@ -203,8 +207,8 @@ int main(int argc, char *argv[]) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 
                 // Run receiver
-                rdmapp::task<void> receiver_task = [connector, cq, buffer_size, config, &test_data]() -> rdmapp::task<void> {
-                    RDMAReceiver receiver(connector, cq, config);
+                rdmapp::task<void> receiver_task = [connector, recv_cq, buffer_size, config, &test_data]() -> rdmapp::task<void> {
+                    RDMAReceiver receiver(connector, recv_cq, config);
                     auto received_data = co_await receiver.receive_data(buffer_size);
                     
                     bool success = verify_data(test_data, received_data);
@@ -242,10 +246,10 @@ int main(int argc, char *argv[]) {
                 config.chunk_size = chunk_size;
                 config.buffer_size = buffer_size * 2;
                 
-                auto connector = std::make_shared<rdmapp::connector>(loop, server_ip, port, pd, cq);
+                auto connector = std::make_shared<rdmapp::connector>(loop, server_ip, port, pd, recv_cq, send_cq);
                 
-                rdmapp::task<void> receiver_task = [connector, cq, buffer_size, config]() -> rdmapp::task<void> {
-                    RDMAReceiver receiver(connector, cq, config);
+                rdmapp::task<void> receiver_task = [connector, recv_cq, buffer_size, config]() -> rdmapp::task<void> {
+                    RDMAReceiver receiver(connector, recv_cq, config);
                     auto received_data = co_await receiver.receive_data(buffer_size);
                     std::cout << "Received " << receiver.get_bytes_received() << " bytes" << std::endl;
                     co_return;
@@ -268,7 +272,7 @@ int main(int argc, char *argv[]) {
                 config.chunk_size = chunk_size;
                 config.buffer_size = buffer_size * 2;
                 
-                auto acceptor = std::make_shared<rdmapp::acceptor>(loop, port, pd, cq);
+                auto acceptor = std::make_shared<rdmapp::acceptor>(loop, port, pd, recv_cq, send_cq);
                 
                 rdmapp::task<void> sender_task = [acceptor, buffer_size, config]() -> rdmapp::task<void> {
                     RDMASender sender(acceptor, config);
@@ -296,10 +300,10 @@ int main(int argc, char *argv[]) {
             config.chunk_size = chunk_size;
             config.buffer_size = buffer_size * 2;
             
-            auto connector = std::make_shared<rdmapp::connector>(loop, server_ip, port, pd, cq);
+            auto connector = std::make_shared<rdmapp::connector>(loop, server_ip, port, pd, recv_cq, send_cq);
             
-            rdmapp::task<void> receiver_task = [connector, cq, buffer_size, config]() -> rdmapp::task<void> {
-                RDMAReceiver receiver(connector, cq, config);
+            rdmapp::task<void> receiver_task = [connector, recv_cq, buffer_size, config]() -> rdmapp::task<void> {
+                RDMAReceiver receiver(connector, recv_cq, config);
                 auto received_data = co_await receiver.receive_data(buffer_size);
                 std::cout << "Received " << receiver.get_bytes_received() << " bytes" << std::endl;
                 co_return;

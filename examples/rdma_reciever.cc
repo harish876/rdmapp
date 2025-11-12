@@ -89,22 +89,37 @@ rdmapp::task<std::vector<uint8_t>> RDMAReceiver::receive_data(size_t expected_si
     frontend_thread_ = std::thread(&RDMAReceiver::frontend_poller, this);
     std::cout << "Receiver: Frontend thread started successfully" << std::endl;
     
+    // Give threads time to fully start before setting CPU affinity
+    // This prevents potential race conditions where affinity is set before thread is ready
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    
     // Set CPU affinity if configured
     if (config_.cpu_core_id >= 0) {
         cpu_set_t cpuset;
         CPU_ZERO(&cpuset);
         CPU_SET(config_.cpu_core_id, &cpuset);
-        pthread_setaffinity_np(completion_thread_.native_handle(), 
-                              sizeof(cpu_set_t), &cpuset);
-        std::cout << "Receiver: Pinned completion thread to CPU " 
-                  << config_.cpu_core_id << std::endl;
         
-        // Also set affinity for frontend thread if needed
-        // Note: Using a different CPU or same CPU as needed
-        pthread_setaffinity_np(frontend_thread_.native_handle(), 
-                              sizeof(cpu_set_t), &cpuset);
-        std::cout << "Receiver: Pinned frontend thread to CPU " 
-                  << config_.cpu_core_id << std::endl;
+        // Set affinity for completion thread
+        int ret = pthread_setaffinity_np(completion_thread_.native_handle(), 
+                                        sizeof(cpu_set_t), &cpuset);
+        if (ret != 0) {
+            std::cerr << "Receiver: Warning - failed to set CPU affinity for completion thread: " 
+                      << ret << std::endl;
+        } else {
+            std::cout << "Receiver: Pinned completion thread to CPU " 
+                      << config_.cpu_core_id << std::endl;
+        }
+        
+        // Set affinity for frontend thread
+        ret = pthread_setaffinity_np(frontend_thread_.native_handle(), 
+                                    sizeof(cpu_set_t), &cpuset);
+        if (ret != 0) {
+            std::cerr << "Receiver: Warning - failed to set CPU affinity for frontend thread: " 
+                      << ret << std::endl;
+        } else {
+            std::cout << "Receiver: Pinned frontend thread to CPU " 
+                      << config_.cpu_core_id << std::endl;
+        }
     }
     
     // Wait for all packets to arrive
@@ -272,6 +287,13 @@ void RDMAReceiver::process_completions() {
         for (size_t i = 0; i < num_completions; ++i) {
             const auto& wc = wc_vec[i];
             
+            // Only process receive completions (from our post_recv operations)
+            // Send completions are handled by cq_poller on the send CQ
+            if (wc.opcode != IBV_WC_RECV && wc.opcode != IBV_WC_RECV_RDMA_WITH_IMM) {
+                std::cout << "Receiver: Skipping non-receive completion: opcode=" << wc.opcode << std::endl;
+                continue;
+            }
+            
             // Check completion status
             if (wc.status != IBV_WC_SUCCESS) {
                 std::cout << "Receiver: Completion error: status=" << wc.status 
@@ -321,7 +343,11 @@ void RDMAReceiver::process_completions() {
                 // Each bitmap entry represents 16 packets
                 size_t bitmap_idx = packet_idx / 16;
                 
+                std::cout << "[COMPLETION] Processing packet " << packet_idx 
+                          << ", bitmap_idx=" << bitmap_idx << std::endl;
+                
                 // Safety checks - ensure packet_bitmap_ is valid and index is in range
+                std::cout << "[COMPLETION] Checking packet_bitmap_..." << std::endl;
                 if (packet_bitmap_.empty()) {
                     std::cerr << "Receiver: FATAL - packet_bitmap_ is empty!" << std::endl;
                     if (dummy_recv_mr_) {
@@ -330,6 +356,7 @@ void RDMAReceiver::process_completions() {
                     continue;
                 }
                 
+                std::cout << "[COMPLETION] packet_bitmap_.size()=" << packet_bitmap_.size() << std::endl;
                 if (bitmap_idx >= packet_bitmap_.size()) {
                     std::cerr << "Receiver: FATAL - bitmap_idx " << bitmap_idx 
                               << " >= packet_bitmap_.size() " << packet_bitmap_.size() 
@@ -340,9 +367,13 @@ void RDMAReceiver::process_completions() {
                     continue;
                 }
                 
+                std::cout << "[COMPLETION] Accessing packet_bitmap_[" << bitmap_idx << "]..." << std::endl;
                 // Set the bit atomically using fetch_or
                 uint16_t bit_mask = 1U << (packet_idx % 16);
+                std::cout << "[COMPLETION] bit_mask=0x" << std::hex << bit_mask << std::dec << std::endl;
                 uint16_t old_val = packet_bitmap_[bitmap_idx].fetch_or(bit_mask, std::memory_order_release);
+                std::cout << "[COMPLETION] Successfully updated bitmap, old_val=0x" 
+                          << std::hex << old_val << std::dec << std::endl;
                 
                 if ((old_val & bit_mask) == 0) {
                     // This is a new packet
@@ -389,7 +420,6 @@ void RDMAReceiver::process_completions() {
 
 void RDMAReceiver::frontend_poller() {
     // Use std::cout with flush to ensure output appears immediately
-    // Try to print before accessing any member variables
     std::cout << "[FRONTEND] Frontend poller thread started" << std::flush << std::endl;
     std::cout << "[FRONTEND] Thread ID: " << std::this_thread::get_id() << std::flush << std::endl;
     
@@ -398,7 +428,8 @@ void RDMAReceiver::frontend_poller() {
         std::cout << "[FRONTEND] Entered try block" << std::flush << std::endl;
         
         // Wait a bit to ensure packet_bitmap_ is initialized
-        std::cout << "[FRONTEND] About to sleep..." << std::flush << std::endl;
+        // Use a single sleep call instead of a loop to simplify
+        std::cout << "[FRONTEND] About to sleep for 10ms..." << std::flush << std::endl;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         std::cout << "[FRONTEND] After initial sleep" << std::flush << std::endl;
         
