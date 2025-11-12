@@ -291,13 +291,24 @@ void RDMAReceiver::process_completions() {
         for (size_t i = 0; i < num_completions; ++i) {
             const auto& wc = wc_vec[i];
             
-            // Only process receive completions with our special marker value (from our post_recv operations)
-            // Send completions have callback pointers in wr_id and are handled by cq_poller
-            // We check wr_id first to avoid processing send completions
+            // Process ALL completions to prevent cq_poller from seeing them
+            // This avoids the race condition where cq_poller tries to process our receive completions
             constexpr uint64_t RECV_MARKER = 0xFFFFFFFFFFFFFFFFULL;
+            
             if (wc.wr_id != RECV_MARKER) {
-                // This is a send completion with a callback pointer - skip it, cq_poller will handle it
-                continue;
+                // This is a send completion with a callback pointer
+                // Manually invoke the callback to prevent cq_poller from processing it
+                // This is safe because we're polling more aggressively than cq_poller
+                try {
+                    auto cb = reinterpret_cast<rdmapp::executor::callback_ptr>(wc.wr_id);
+                    (*cb)(wc);
+                    // Destroy the callback after invocation (same as executor does)
+                    rdmapp::executor::destroy_callback(cb);
+                } catch (...) {
+                    // If callback invocation fails, log and continue
+                    std::cerr << "[BACKEND] Warning - failed to invoke callback for send completion" << std::endl;
+                }
+                continue; // Skip to next completion
             }
             
             // Verify this is actually a receive completion
