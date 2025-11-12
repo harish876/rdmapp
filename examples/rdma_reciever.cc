@@ -280,7 +280,7 @@ void RDMAReceiver::process_completions() {
         total_polled += num_completions;
         
         if (num_completions > 0) {
-            std::cout << "Receiver: Polled " << num_completions << " completions (total: " 
+            std::cout << "[BACKEND] Polled " << num_completions << " completions (total polled: " 
                       << total_polled << ")" << std::endl;
         }
         
@@ -320,9 +320,9 @@ void RDMAReceiver::process_completions() {
                 // Decode immediate value to get packet index
                 auto [msg_id, packet_idx] = decode_immediate(imm);
                 
-                std::cout << "Receiver: Received completion with IMM: msg_id=" << msg_id 
-                          << ", packet_idx=" << packet_idx << ", imm=0x" << std::hex 
-                          << imm << std::dec << std::endl;
+                std::cout << "[BACKEND] Received packet " << packet_idx 
+                          << " (msg_id=" << msg_id << ", imm=0x" << std::hex 
+                          << imm << std::dec << ")" << std::endl;
                 
                 // Verify message ID matches
                 if (msg_id != current_msg_id_ - 1) {
@@ -350,22 +350,17 @@ void RDMAReceiver::process_completions() {
                 // Each bitmap entry represents 16 packets
                 size_t bitmap_idx = packet_idx / 16;
                 
-                std::cout << "[COMPLETION] Processing packet " << packet_idx 
-                          << ", bitmap_idx=" << bitmap_idx << std::endl;
-                
                 // Safety checks - ensure packet_bitmap_ is valid and index is in range
-                std::cout << "[COMPLETION] Checking packet_bitmap_..." << std::endl;
                 if (packet_bitmap_.empty()) {
-                    std::cerr << "Receiver: FATAL - packet_bitmap_ is empty!" << std::endl;
+                    std::cerr << "[BACKEND] FATAL - packet_bitmap_ is empty!" << std::endl;
                     if (dummy_recv_mr_) {
                         post_single_receive();
                     }
                     continue;
                 }
                 
-                std::cout << "[COMPLETION] packet_bitmap_.size()=" << packet_bitmap_.size() << std::endl;
                 if (bitmap_idx >= packet_bitmap_.size()) {
-                    std::cerr << "Receiver: FATAL - bitmap_idx " << bitmap_idx 
+                    std::cerr << "[BACKEND] FATAL - bitmap_idx " << bitmap_idx 
                               << " >= packet_bitmap_.size() " << packet_bitmap_.size() 
                               << " (packet_idx=" << packet_idx << ")" << std::endl;
                     if (dummy_recv_mr_) {
@@ -374,20 +369,20 @@ void RDMAReceiver::process_completions() {
                     continue;
                 }
                 
-                std::cout << "[COMPLETION] Accessing packet_bitmap_[" << bitmap_idx << "]..." << std::endl;
                 // Set the bit atomically using fetch_or
                 uint16_t bit_mask = 1U << (packet_idx % 16);
-                std::cout << "[COMPLETION] bit_mask=0x" << std::hex << bit_mask << std::dec << std::endl;
                 uint16_t old_val = packet_bitmap_[bitmap_idx].fetch_or(bit_mask, std::memory_order_release);
-                std::cout << "[COMPLETION] Successfully updated bitmap, old_val=0x" 
-                          << std::hex << old_val << std::dec << std::endl;
                 
                 if ((old_val & bit_mask) == 0) {
                     // This is a new packet
                     packets_received_.fetch_add(1, std::memory_order_relaxed);
-                    std::cout << "Receiver: Marked packet " << packet_idx << " (bitmap[" 
-                              << bitmap_idx << "] = 0x" << std::hex 
+                    std::cout << "[BACKEND] Marked packet " << packet_idx 
+                              << " in bitmap[" << bitmap_idx << "] (bitmask=0x" << std::hex 
+                              << bit_mask << ", old=0x" << old_val << ", new=0x" 
                               << (old_val | bit_mask) << std::dec << ")" << std::endl;
+                } else {
+                    std::cout << "[BACKEND] Packet " << packet_idx 
+                              << " already marked (duplicate completion?)" << std::endl;
                 }
                 
                 // Repost a receive to replace the one we just consumed
@@ -395,8 +390,8 @@ void RDMAReceiver::process_completions() {
                     post_single_receive();
                 }
             } else {
-                std::cout << "Receiver: Completion without IMM: opcode=" << wc.opcode 
-                          << ", byte_len=" << wc.byte_len << std::endl;
+                std::cout << "[BACKEND] Completion without IMM: opcode=" << wc.opcode 
+                          << ", byte_len=" << wc.byte_len << " (skipping)" << std::endl;
                 
                 // Repost a receive even for non-IMM completions
                 if (dummy_recv_mr_) {
@@ -426,36 +421,22 @@ void RDMAReceiver::process_completions() {
 }
 
 void RDMAReceiver::frontend_poller() {
-    // Use std::cout with flush to ensure output appears immediately
-    std::cout << "[FRONTEND] Frontend poller thread started" << std::flush << std::endl;
-    std::cout << "[FRONTEND] Thread ID: " << std::this_thread::get_id() << std::flush << std::endl;
+    // Wait a bit to ensure packet_bitmap_ is initialized
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
     
     // Add a try-catch to catch any exceptions
     try {
-        std::cout << "[FRONTEND] Entered try block" << std::flush << std::endl;
-        
-        // Wait a bit to ensure packet_bitmap_ is initialized
-        // Use a single sleep call instead of a loop to simplify
-        std::cout << "[FRONTEND] About to sleep for 10ms..." << std::flush << std::endl;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        std::cout << "[FRONTEND] After initial sleep" << std::flush << std::endl;
-        
-        // Check if we can access member variables safely - do this one at a time
-        std::cout << "[FRONTEND] Checking stop_thread_..." << std::flush << std::endl;
+        // Check if we can access member variables safely
         bool stop = stop_thread_.load(std::memory_order_acquire);
-        std::cout << "[FRONTEND] stop_thread_=" << stop << std::flush << std::endl;
-        
-        std::cout << "[FRONTEND] Checking total_packets_..." << std::flush << std::endl;
         size_t total = total_packets_;
-        std::cout << "[FRONTEND] total_packets_=" << total << std::flush << std::endl;
-        
-        std::cout << "[FRONTEND] Checking packet_bitmap_..." << std::flush << std::endl;
         size_t bmp_size = packet_bitmap_.size();
-        std::cout << "[FRONTEND] packet_bitmap_.size()=" << bmp_size << std::flush << std::endl;
-        
-        std::cout << "[FRONTEND] Checking config_.chunk_size..." << std::flush << std::endl;
         size_t chunk_size = config_.chunk_size;
-        std::cout << "[FRONTEND] config_.chunk_size=" << chunk_size << std::flush << std::endl;
+        
+        // Suppress unused variable warnings
+        (void)stop;
+        (void)total;
+        (void)bmp_size;
+        (void)chunk_size;
         
     } catch (const std::exception& e) {
         std::cerr << "[FRONTEND] Exception in frontend_poller: " << e.what() << std::endl;
@@ -465,67 +446,44 @@ void RDMAReceiver::frontend_poller() {
         return;
     }
     
-    std::cout << "[FRONTEND] Entering main loop..." << std::flush << std::endl;
+    // std::cout << "[FRONTEND] Frontend poller thread started" << std::endl;
     int iteration = 0;
     while (!stop_thread_.load(std::memory_order_acquire)) {
         iteration++;
-        if (iteration % 1000 == 0) {
-            std::cout << "[FRONTEND] Iteration " << iteration << std::endl;
-        }
+        // if (iteration % 1000 == 0) {
+        //     std::cout << "[FRONTEND] Iteration " << iteration << std::endl;
+        // }
         
         // Safety check
-        std::cout << "[FRONTEND] Checking packet_bitmap_ and total_packets_" << std::endl;
         if (packet_bitmap_.empty() || total_packets_ == 0) {
-            std::cout << "[FRONTEND] packet_bitmap_ empty or total_packets_=0, sleeping" << std::endl;
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }
         
-        std::cout << "[FRONTEND] packet_bitmap_.size()=" << packet_bitmap_.size() 
-                  << ", total_packets_=" << total_packets_ << std::endl;
-        
         // Poll the packet bitmap and update chunk bitmap
         // Check each packet bitmap entry
-        std::cout << "[FRONTEND] Starting loop over packet_bitmap_ entries" << std::endl;
         for (size_t i = 0; i < packet_bitmap_.size(); ++i) {
-            if (i == 0 || (i % 10 == 0)) {
-                std::cout << "[FRONTEND] Processing bitmap entry " << i << std::endl;
-            }
-            
             // Read the packet bitmap entry atomically
-            std::cout << "[FRONTEND] Loading packet_mask from bitmap[" << i << "]" << std::endl;
             uint16_t packet_mask = packet_bitmap_[i].load(std::memory_order_acquire);
-            std::cout << "[FRONTEND] Loaded packet_mask=0x" << std::hex << packet_mask << std::dec << std::endl;
             
             // Check if the mask (0xFFFF & packet_bitmap_[i]) indicates all bits are set
             // This means all 16 packets in this bitmap entry are received
             if ((packet_mask & 0xFFFF) == 0xFFFF) {
-                std::cout << "[FRONTEND] All bits set in bitmap[" << i << "], checking chunks" << std::endl;
-                
                 // Calculate which packets this bitmap entry covers
                 size_t first_packet = i * 16;
                 size_t last_packet = std::min(first_packet + 15, total_packets_ - 1);
-                std::cout << "[FRONTEND] first_packet=" << first_packet << ", last_packet=" << last_packet << std::endl;
                 
                 // For each chunk that overlaps with these packets, check if it's complete
                 // and mark it atomically if so
                 size_t first_chunk = first_packet / config_.chunk_size;
                 size_t last_chunk = last_packet / config_.chunk_size;
-                std::cout << "[FRONTEND] first_chunk=" << first_chunk << ", last_chunk=" << last_chunk 
-                          << ", total_chunks_=" << total_chunks_ << std::endl;
                 
                 for (size_t chunk_idx = first_chunk; chunk_idx <= last_chunk && chunk_idx < total_chunks_; ++chunk_idx) {
-                    std::cout << "[FRONTEND] Processing chunk_idx=" << chunk_idx << std::endl;
-                    
                     // Check if this chunk is already marked
                     uint64_t chunk_bit = 1ULL << chunk_idx;
-                    std::cout << "[FRONTEND] chunk_bit=0x" << std::hex << chunk_bit << std::dec << std::endl;
-                    
                     uint64_t current_chunk_bitmap = chunk_bitmap_.load(std::memory_order_acquire);
-                    std::cout << "[FRONTEND] current_chunk_bitmap=0x" << std::hex << current_chunk_bitmap << std::dec << std::endl;
                     
                     if (current_chunk_bitmap & chunk_bit) {
-                        std::cout << "[FRONTEND] Chunk " << chunk_idx << " already marked, skipping" << std::endl;
                         continue; // Already marked
                     }
                     
@@ -534,62 +492,36 @@ void RDMAReceiver::frontend_poller() {
                     size_t chunk_start_packet = chunk_idx * config_.chunk_size;
                     size_t chunk_end_packet = std::min(chunk_start_packet + config_.chunk_size - 1, 
                                                        total_packets_ - 1);
-                    std::cout << "[FRONTEND] Checking packets in chunk: start=" << chunk_start_packet 
-                              << ", end=" << chunk_end_packet << std::endl;
                     
                     for (size_t p = chunk_start_packet; p <= chunk_end_packet; ++p) {
-                        std::cout << "[FRONTEND] Checking packet " << p << std::endl;
                         size_t bmp_idx = p / 16;
                         size_t bit_pos = p % 16;
                         uint16_t bit_mask = 1U << bit_pos;
                         
-                        std::cout << "[FRONTEND] packet " << p << ": bmp_idx=" << bmp_idx 
-                                  << ", bit_pos=" << bit_pos << ", bit_mask=0x" << std::hex 
-                                  << bit_mask << std::dec << std::endl;
-                        
                         // Safety check
                         if (bmp_idx >= packet_bitmap_.size()) {
-                            std::cout << "[FRONTEND] ERROR: bmp_idx " << bmp_idx 
-                                      << " >= packet_bitmap_.size() " << packet_bitmap_.size() << std::endl;
                             chunk_complete = false;
                             break;
                         }
                         
-                        std::cout << "[FRONTEND] Loading bitmap[" << bmp_idx << "]" << std::endl;
                         uint16_t bmp_val = packet_bitmap_[bmp_idx].load(std::memory_order_acquire);
-                        std::cout << "[FRONTEND] bitmap[" << bmp_idx << "]=0x" << std::hex 
-                                  << bmp_val << std::dec << std::endl;
                         
                         if ((bmp_val & bit_mask) == 0) {
-                            std::cout << "[FRONTEND] Packet " << p << " not received yet" << std::endl;
                             chunk_complete = false;
                             break;
                         }
-                        std::cout << "[FRONTEND] Packet " << p << " is received" << std::endl;
                     }
                     
                     // If chunk is complete, mark it atomically
                     if (chunk_complete) {
-                        std::cout << "[FRONTEND] Chunk " << chunk_idx << " is complete, marking it" << std::endl;
                         chunk_bitmap_.fetch_or(chunk_bit, std::memory_order_release);
-                        std::cout << "[FRONTEND] Chunk " << chunk_idx << " marked successfully" << std::endl;
-                    } else {
-                        std::cout << "[FRONTEND] Chunk " << chunk_idx << " is not complete yet" << std::endl;
                     }
-                }
-            } else {
-                if (i == 0 || (i % 10 == 0)) {
-                    std::cout << "[FRONTEND] Bitmap[" << i << "] not all bits set (mask=0x" 
-                              << std::hex << packet_mask << std::dec << ")" << std::endl;
                 }
             }
         }
         
-        std::cout << "[FRONTEND] Finished loop over packet_bitmap_ entries" << std::endl;
-        
         // Check if we should exit
         if (reception_complete_.load(std::memory_order_acquire)) {
-            std::cout << "[FRONTEND] Reception complete, exiting" << std::endl;
             break;
         }
         
@@ -597,7 +529,7 @@ void RDMAReceiver::frontend_poller() {
         std::this_thread::sleep_for(std::chrono::microseconds(100));
     }
     
-    std::cout << "[FRONTEND] Frontend poller thread exiting" << std::endl;
+    // std::cout << "[FRONTEND] Frontend poller thread exiting" << std::endl;
 }
 
 bool RDMAReceiver::is_complete() const {
