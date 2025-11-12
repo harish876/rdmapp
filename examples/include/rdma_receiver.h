@@ -77,6 +77,7 @@ private:
     
     // Dummy buffer for receives (immediate data comes out-of-band)
     std::vector<uint8_t> dummy_recv_buffer_;
+    std::shared_ptr<rdmapp::local_mr> dummy_recv_mr_;
 };
 
 } // namespace RDMA_EC

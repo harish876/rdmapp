@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstring>
 #include <pthread.h>
+#include <infiniband/verbs.h>
 
 namespace RDMA_EC {
 
@@ -134,17 +135,42 @@ rdmapp::task<void> RDMAReceiver::send_cts(size_t buffer_size) {
 }
 
 rdmapp::task<void> RDMAReceiver::post_receives(size_t count) {
-    // Post dummy receives to catch immediate values
-    // In RDMA Write with Immediate, the immediate value comes
-    // in the completion, not in the receive buffer
+    // Post receives to catch immediate values from RDMA Write with Immediate
+    // In RDMA Write with Immediate, the immediate value comes in the receive completion
+    // The actual data is written directly to memory via RDMA Write
     
+    std::cout << "Receiver: Posting " << count << " receives for immediates..." << std::endl;
+    
+    // Register a memory region for the dummy receive buffer if not already done
+    // We'll reuse the same buffer for all receives
+    auto pd = qp_->pd_ptr();
+    auto dummy_mr = std::make_shared<rdmapp::local_mr>(
+        pd->reg_mr(dummy_recv_buffer_.data(), dummy_recv_buffer_.size()));
+    
+    // Post receives directly using the low-level API
     for (size_t i = 0; i < count; ++i) {
-        // Each receive will catch one immediate value
-        // The actual data is written directly to memory via RDMA Write
-        auto recv_task = qp_->recv(dummy_recv_buffer_.data(), 
-                                   dummy_recv_buffer_.size());
-        // Don't await here - let them be processed asynchronously
+        struct ibv_sge recv_sge;
+        recv_sge.addr = reinterpret_cast<uint64_t>(dummy_mr->addr());
+        recv_sge.length = dummy_mr->length();
+        recv_sge.lkey = dummy_mr->lkey();
+        
+        struct ibv_recv_wr recv_wr = {};
+        struct ibv_recv_wr *bad_recv_wr = nullptr;
+        recv_wr.next = nullptr;
+        recv_wr.num_sge = 1;
+        recv_wr.wr_id = 0;  // We'll identify by immediate value in completion
+        recv_wr.sg_list = &recv_sge;
+        
+        try {
+            qp_->post_recv(recv_wr, bad_recv_wr);
+        } catch (const std::exception& e) {
+            std::cerr << "Receiver: Failed to post receive " << i << ": " << e.what() << std::endl;
+            throw;
+        }
     }
+    
+    // Keep the MR alive
+    dummy_recv_mr_ = dummy_mr;
     
     std::cout << "Receiver: Posted " << count << " receives for immediates" << std::endl;
     
@@ -156,20 +182,40 @@ void RDMAReceiver::process_completions() {
     
     constexpr size_t batch_size = 32;
     std::vector<struct ibv_wc> wc_vec(batch_size);
+    size_t total_polled = 0;
+    size_t total_with_imm = 0;
     
     while (!stop_thread_) {
         // Poll the completion queue
         size_t num_completions = recv_cq_->poll(wc_vec);
+        total_polled += num_completions;
+        
+        if (num_completions > 0) {
+            std::cout << "Receiver: Polled " << num_completions << " completions (total: " 
+                      << total_polled << ")" << std::endl;
+        }
         
         for (size_t i = 0; i < num_completions; ++i) {
             const auto& wc = wc_vec[i];
             
+            // Check completion status
+            if (wc.status != IBV_WC_SUCCESS) {
+                std::cout << "Receiver: Completion error: status=" << wc.status 
+                          << ", opcode=" << wc.opcode << std::endl;
+                continue;
+            }
+            
             // Check if this completion has an immediate value
             if (wc.wc_flags & IBV_WC_WITH_IMM) {
+                total_with_imm++;
                 uint32_t imm = wc.imm_data;
                 
                 // Decode immediate value to get packet index
                 auto [msg_id, packet_idx] = decode_immediate(imm);
+                
+                std::cout << "Receiver: Received completion with IMM: msg_id=" << msg_id 
+                          << ", packet_idx=" << packet_idx << ", imm=0x" << std::hex 
+                          << imm << std::dec << std::endl;
                 
                 // Verify message ID matches
                 if (msg_id != current_msg_id_ - 1) {
@@ -191,15 +237,25 @@ void RDMAReceiver::process_completions() {
                 
                 // Set the bit atomically using fetch_or
                 uint16_t bit_mask = 1U << (packet_idx % 16);
-                packet_bitmap_[bitmap_idx].fetch_or(bit_mask, std::memory_order_release);
+                uint16_t old_val = packet_bitmap_[bitmap_idx].fetch_or(bit_mask, std::memory_order_release);
                 
-                packets_received_.fetch_add(1, std::memory_order_relaxed);
+                if ((old_val & bit_mask) == 0) {
+                    // This is a new packet
+                    packets_received_.fetch_add(1, std::memory_order_relaxed);
+                    std::cout << "Receiver: Marked packet " << packet_idx << " (bitmap[" 
+                              << bitmap_idx << "] = 0x" << std::hex 
+                              << (old_val | bit_mask) << std::dec << ")" << std::endl;
+                }
+            } else {
+                std::cout << "Receiver: Completion without IMM: opcode=" << wc.opcode 
+                          << ", byte_len=" << wc.byte_len << std::endl;
             }
         }
         
         // Check if all packets have been received
         size_t received_count = packets_received_.load(std::memory_order_acquire);
         if (received_count >= total_packets_) {
+            std::cout << "Receiver: All " << total_packets_ << " packets received!" << std::endl;
             std::lock_guard<std::mutex> lock(completion_mutex_);
             reception_complete_ = true;
             completion_cv_.notify_all();
@@ -212,7 +268,8 @@ void RDMAReceiver::process_completions() {
         }
     }
     
-    std::cout << "Receiver: Completion thread exiting" << std::endl;
+    std::cout << "Receiver: Completion thread exiting (total polled: " << total_polled 
+              << ", with IMM: " << total_with_imm << ")" << std::endl;
 }
 
 void RDMAReceiver::frontend_poller() {
