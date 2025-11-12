@@ -101,11 +101,9 @@ rdmapp::task<void> RDMASender::send_packet(size_t packet_idx,
     // Encode packet index in immediate value
     uint32_t imm = encode_immediate(current_msg_id_, packet_idx);
     
-    if (packet_idx < 5 || packet_idx % 100 == 0) {
-        std::cout << "Sender: Sending packet " << packet_idx << " offset=" << offset 
-                  << " size=" << packet_size << " imm=0x" << std::hex << imm << std::dec << std::endl;
-    }
-    
+    std::cout << "Sender: Sending packet " << packet_idx << " offset=" << offset 
+                << " size=" << packet_size << " imm=0x" << std::hex << imm << std::dec << std::endl;
+
     // Send packet with RDMA Write with Immediate
     co_await qp_->write_with_imm(
         remote_mr,

@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstring>
 #include <pthread.h>
+#include <sched.h>
 #include <infiniband/verbs.h>
 
 namespace RDMA_EC {
@@ -80,9 +81,9 @@ rdmapp::task<std::vector<uint8_t>> RDMAReceiver::receive_data(size_t expected_si
     // Start background threads BEFORE sending CTS
     // This ensures the completion thread is ready to poll receive completions
     // before cq_poller can consume them (if cq_poller is being used)
-    std::cout << "Receiver: Starting completion thread..." << std::endl;
+    std::cout << "Receiver: Starting backend thread..." << std::endl;
     completion_thread_ = std::thread(&RDMAReceiver::process_completions, this);
-    std::cout << "Receiver: Completion thread started successfully" << std::endl;
+    std::cout << "Receiver: Backend thread started successfully" << std::endl;
     
     std::cout << "Receiver: Starting frontend thread..." << std::endl;
     frontend_thread_ = std::thread(&RDMAReceiver::frontend_poller, this);
@@ -95,39 +96,6 @@ rdmapp::task<std::vector<uint8_t>> RDMAReceiver::receive_data(size_t expected_si
     
     // Send CTS to sender (this requires cq_poller to process send completion)
     co_await send_cts(expected_size);
-    
-    // Give threads time to fully start before setting CPU affinity
-    // This prevents potential race conditions where affinity is set before thread is ready
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    
-    // Set CPU affinity if configured
-    if (config_.cpu_core_id >= 0) {
-        cpu_set_t cpuset;
-        CPU_ZERO(&cpuset);
-        CPU_SET(config_.cpu_core_id, &cpuset);
-        
-        // Set affinity for completion thread
-        int ret = pthread_setaffinity_np(completion_thread_.native_handle(), 
-                                        sizeof(cpu_set_t), &cpuset);
-        if (ret != 0) {
-            std::cerr << "Receiver: Warning - failed to set CPU affinity for completion thread: " 
-                      << ret << std::endl;
-        } else {
-            std::cout << "Receiver: Pinned completion thread to CPU " 
-                      << config_.cpu_core_id << std::endl;
-        }
-        
-        // Set affinity for frontend thread
-        ret = pthread_setaffinity_np(frontend_thread_.native_handle(), 
-                                    sizeof(cpu_set_t), &cpuset);
-        if (ret != 0) {
-            std::cerr << "Receiver: Warning - failed to set CPU affinity for frontend thread: " 
-                      << ret << std::endl;
-        } else {
-            std::cout << "Receiver: Pinned frontend thread to CPU " 
-                      << config_.cpu_core_id << std::endl;
-        }
-    }
     
     // Wait for all packets to arrive
     {
@@ -251,7 +219,22 @@ void RDMAReceiver::post_single_receive() {
 }
 
 void RDMAReceiver::process_completions() {
-    std::cout << "Receiver: Completion thread started" << std::endl;
+    // Set CPU affinity for this thread if configured
+    if (config_.cpu_core_id >= 0) {
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(1, &cpuset);
+        int ret = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+        if (ret != 0) {
+            std::cerr << "Receiver: Warning - failed to set CPU affinity for backend thread: " 
+                      << ret << std::endl;
+        } else {
+            std::cout << "Receiver: Pinned backend thread to CPU " 
+                      << sched_getcpu() << std::endl;
+        }
+    }
+    
+    std::cout << "Receiver: Backend thread started" << std::endl;
     
     // Wait a bit to ensure dummy_recv_mr_, recv_cq_, and packet_bitmap_ are initialized
     // This is a safety measure - post_receives() should complete before threads start
@@ -273,7 +256,7 @@ void RDMAReceiver::process_completions() {
         return;
     }
     
-    std::cout << "Receiver: Completion thread ready - packet_bitmap_.size()=" 
+    std::cout << "Receiver: Backend thread ready - packet_bitmap_.size()=" 
               << packet_bitmap_.size() << ", total_packets_=" << total_packets_ << std::endl;
     
     constexpr size_t batch_size = 32;
@@ -283,13 +266,7 @@ void RDMAReceiver::process_completions() {
     
     // Poll very aggressively - we need to get completions before cq_poller does
     // because cq_poller will consume them from the CQ even if it skips processing
-    int poll_iterations = 0;
     while (!stop_thread_) {
-        poll_iterations++;
-        if (poll_iterations % 100000 == 0) {
-            std::cout << "[BACKEND] Still polling... (iteration " << poll_iterations << ")" << std::endl;
-        }
-        
         // Poll the completion queue
         if (!recv_cq_) {
             std::cerr << "Receiver: recv_cq_ is null!" << std::endl;
@@ -300,7 +277,7 @@ void RDMAReceiver::process_completions() {
         
         if (num_completions > 0) {
             std::cout << "[BACKEND] Polled " << num_completions << " completions (total polled: " 
-                      << total_polled << ", iteration " << poll_iterations << ")" << std::endl;
+                      << total_polled << std::endl;
         }
         
         for (size_t i = 0; i < num_completions; ++i) {
@@ -448,11 +425,26 @@ void RDMAReceiver::process_completions() {
         }
     }
     
-    std::cout << "Receiver: Completion thread exiting (total polled: " << total_polled 
+    std::cout << "Receiver: Backend thread exiting (total polled: " << total_polled 
               << ", with IMM: " << total_with_imm << ")" << std::endl;
 }
 
 void RDMAReceiver::frontend_poller() {
+    // Set CPU affinity for this thread if configured
+    if (config_.cpu_core_id >= 0) {
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(2, &cpuset);
+        int ret = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+        if (ret != 0) {
+            std::cerr << "Receiver: Warning - failed to set CPU affinity for frontend thread: " 
+                      << ret << std::endl;
+        } else {
+            std::cout << "Receiver: Pinned frontend thread to CPU " 
+                      << sched_getcpu() << std::endl;
+        }
+    }
+    
     // Wait a bit to ensure packet_bitmap_ is initialized
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
     

@@ -17,7 +17,7 @@ struct Config {
     size_t mtu = DEFAULT_MTU;
     size_t chunk_size = DEFAULT_CHUNK_SIZE;
     size_t buffer_size = DEFAULT_BUFFER_SIZE;
-    int cpu_core_id = -1;  // -1 means no CPU pinning
+    int cpu_core_id = 2;  // -1 means no CPU pinning
 };
 
 // Clear-To-Send message structure
