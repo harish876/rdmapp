@@ -72,15 +72,14 @@ rdmapp::task<std::vector<uint8_t>> RDMAReceiver::receive_data(size_t expected_si
               << reinterpret_cast<uint64_t>(dummy_recv_mr_->addr()) << std::dec 
               << ", length=" << dummy_recv_mr_->length() << ")" << std::endl;
     
-    // Send CTS to sender
-    co_await send_cts(expected_size);
-    
     // Verify all member variables are ready before starting threads
     std::cout << "Receiver: Pre-thread checks - packet_bitmap_.size()=" << packet_bitmap_.size()
               << ", total_packets_=" << total_packets_ 
               << ", total_chunks_=" << total_chunks_ << std::endl;
     
-    // Start background threads for processing completions and frontend polling
+    // Start background threads BEFORE sending CTS
+    // This ensures the completion thread is ready to poll receive completions
+    // before cq_poller can consume them (if cq_poller is being used)
     std::cout << "Receiver: Starting completion thread..." << std::endl;
     completion_thread_ = std::thread(&RDMAReceiver::process_completions, this);
     std::cout << "Receiver: Completion thread started successfully" << std::endl;
@@ -88,6 +87,14 @@ rdmapp::task<std::vector<uint8_t>> RDMAReceiver::receive_data(size_t expected_si
     std::cout << "Receiver: Starting frontend thread..." << std::endl;
     frontend_thread_ = std::thread(&RDMAReceiver::frontend_poller, this);
     std::cout << "Receiver: Frontend thread started successfully" << std::endl;
+    
+    // Give threads a moment to start polling before we send CTS
+    // This helps ensure the receiver's thread can get receive completions
+    // before cq_poller (if used) starts consuming them
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    
+    // Send CTS to sender (this requires cq_poller to process send completion)
+    co_await send_cts(expected_size);
     
     // Give threads time to fully start before setting CPU affinity
     // This prevents potential race conditions where affinity is set before thread is ready
