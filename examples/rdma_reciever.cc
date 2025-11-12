@@ -38,19 +38,19 @@ rdmapp::task<std::vector<uint8_t>> RDMAReceiver::receive_data(size_t expected_si
     
     // Allocate and register receive buffer
     recv_buffer_.resize(config_.buffer_size);
-    auto pd = qp_->pd();
-    local_mr_ = pd->reg_mr(recv_buffer_.data(), recv_buffer_.size());
+    auto pd = qp_->pd_ptr();
+    local_mr_ = std::make_shared<rdmapp::local_mr>(
+        pd->reg_mr(recv_buffer_.data(), recv_buffer_.size()));
     
     // Calculate expected packets and chunks
     total_packets_ = calculate_num_packets(expected_size, config_.mtu);
     total_chunks_ = calculate_num_chunks(total_packets_, config_.chunk_size);
     
     // Initialize packet bitmap: each element is atomic<uint16_t> representing 16 packets
+    // Note: atomic types are not copyable/movable, so we must construct with the right size
+    // from the start. The constructor will default-construct each element (initialized to 0)
     size_t bitmap_size = (total_packets_ + 15) / 16;  // Round up to nearest 16
-    packet_bitmap_.resize(bitmap_size);
-    for (auto& entry : packet_bitmap_) {
-        entry.store(0, std::memory_order_relaxed);
-    }
+    packet_bitmap_ = std::vector<std::atomic<uint16_t>>(bitmap_size);
     
     // Initialize chunk bitmap
     chunk_bitmap_.store(0, std::memory_order_relaxed);

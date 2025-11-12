@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rdma_util.h"
+#include "acceptor.h"
 #include <rdmapp/rdmapp.h>
 #include <memory>
 #include <vector>
@@ -50,7 +51,7 @@ private:
     std::atomic<size_t> bytes_sent_{0};
     
     // Local memory region
-    std::shared_ptr<rdmapp::mr> local_mr_;
+    std::shared_ptr<rdmapp::local_mr> local_mr_;
 };
 
 } // namespace RDMA_EC

@@ -24,16 +24,16 @@ rdmapp::task<void> RDMASender::send_data(const void* data, size_t size) {
               << std::dec << ", packets=" << cts_info_.total_packets << std::endl;
     
     // Register local memory
-    auto pd = qp_->pd();
-    local_mr_ = pd->reg_mr(const_cast<void*>(data), size);
+    auto pd = qp_->pd_ptr();
+    local_mr_ = std::make_shared<rdmapp::local_mr>(
+        pd->reg_mr(const_cast<void*>(data), size));
     
     // Calculate segmentation
     const uint8_t* data_ptr = static_cast<const uint8_t*>(data);
     size_t num_packets = calculate_num_packets(size, config_.mtu);
     size_t num_chunks = calculate_num_chunks(num_packets, config_.chunk_size);
     
-    // Update message ID for this transfer
-    uint16_t msg_id = current_msg_id_.fetch_add(1);
+    // Note: current_msg_id_ is set from CTS message, not incremented here
     
     std::cout << "Sender: Sending " << size << " bytes in " 
               << num_packets << " packets across " 
@@ -74,7 +74,7 @@ rdmapp::task<void> RDMASender::wait_for_cts() {
 
 rdmapp::task<void> RDMASender::send_chunk(size_t chunk_idx,
                                           const uint8_t* data,
-                                          size_t chunk_start_offset,
+                                          size_t /* chunk_start_offset */,
                                           size_t packets_in_chunk) {
     for (size_t pkt_idx = 0; pkt_idx < packets_in_chunk; ++pkt_idx) {
         size_t global_packet_idx = chunk_idx * config_.chunk_size + pkt_idx;
@@ -92,15 +92,18 @@ rdmapp::task<void> RDMASender::send_packet(size_t packet_idx,
                                            const uint8_t* data,
                                            size_t offset,
                                            size_t packet_size) {
-    // Create remote memory region
-    rdmapp::remote_mr remote_mr(cts_info_.remote_addr, cts_info_.rkey);
+    // Create remote memory region for this packet at the offset
+    rdmapp::remote_mr remote_mr(
+        reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(cts_info_.remote_addr) + offset),
+        static_cast<uint32_t>(packet_size),
+        cts_info_.rkey);
     
     // Encode packet index in immediate value
     uint32_t imm = encode_immediate(current_msg_id_, packet_idx);
     
     // Send packet with RDMA Write with Immediate
     co_await qp_->write_with_imm(
-        remote_mr.slice(offset, packet_size),
+        remote_mr,
         const_cast<uint8_t*>(data + offset),
         packet_size,
         imm

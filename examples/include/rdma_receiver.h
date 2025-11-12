@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rdma_util.h"
+#include "connector.h"
 #include <rdmapp/rdmapp.h>
 #include <memory>
 #include <vector>
@@ -48,7 +49,7 @@ private:
     
     // Receive buffer
     std::vector<uint8_t> recv_buffer_;
-    std::shared_ptr<rdmapp::mr> local_mr_;
+    std::shared_ptr<rdmapp::local_mr> local_mr_;
     
     // Packet tracking bitmaps
     std::vector<std::atomic<uint16_t>> packet_bitmap_;
