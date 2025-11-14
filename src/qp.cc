@@ -54,7 +54,8 @@ qp::qp(std::shared_ptr<rdmapp::pd> pd, std::shared_ptr<cq> cq,
 qp::qp(std::shared_ptr<rdmapp::pd> pd, std::shared_ptr<cq> recv_cq,
        std::shared_ptr<cq> send_cq, std::shared_ptr<srq> srq)
     : qp_(nullptr), pd_(pd), recv_cq_(recv_cq), send_cq_(send_cq), srq_(srq) {
-  create_mlx5();
+  //create_mlx5();
+  create();
   init();
 }
 
