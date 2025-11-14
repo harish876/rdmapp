@@ -77,13 +77,13 @@ std::vector<uint8_t> qp::serialize() const {
 void qp::create() {
   struct ibv_qp_init_attr qp_init_attr = {};
   ::bzero(&qp_init_attr, sizeof(qp_init_attr));
-  qp_init_attr.qp_type = IBV_QPT_RC;
+  qp_init_attr.qp_type = IBV_QPT_RC; //TODO: Change to UC
   qp_init_attr.recv_cq = recv_cq_->cq_;
   qp_init_attr.send_cq = send_cq_->cq_;
-  qp_init_attr.cap.max_recv_sge = 1;
-  qp_init_attr.cap.max_send_sge = 1;
-  qp_init_attr.cap.max_recv_wr = 128;
-  qp_init_attr.cap.max_send_wr = 128;
+  qp_init_attr.cap.max_recv_sge = 8;
+  qp_init_attr.cap.max_send_sge = 8;
+  qp_init_attr.cap.max_recv_wr = 256;
+  qp_init_attr.cap.max_send_wr = 256;
   qp_init_attr.sq_sig_all = 0;
   qp_init_attr.qp_context = this;
 
@@ -109,10 +109,10 @@ void qp::create_mlx5() {
   qp_init_attr.qp_type = IBV_QPT_RC;          // change to IBV_QPT_UC if we switch to UC
   qp_init_attr.recv_cq = recv_cq_->cq_;
   qp_init_attr.send_cq = send_cq_->cq_;
-  qp_init_attr.cap.max_recv_sge = 1;
-  qp_init_attr.cap.max_send_sge = 1;
-  qp_init_attr.cap.max_recv_wr  = 128;
-  qp_init_attr.cap.max_send_wr  = 128;
+  qp_init_attr.cap.max_recv_sge = 8;
+  qp_init_attr.cap.max_send_sge = 8;
+  qp_init_attr.cap.max_recv_wr  = 256;
+  qp_init_attr.cap.max_send_wr  = 256;
   qp_init_attr.sq_sig_all = 0;
   qp_init_attr.qp_context = this;
 
