@@ -160,6 +160,8 @@ bool device::is_fetch_and_add_supported() const {
 
 int device::gid_index() const { return gid_index_; }
 
+enum ibv_mtu device::active_mtu() const { return port_attr_.active_mtu; }
+
 std::string device::gid_hex_string(union ibv_gid const &gid) {
   std::string gid_str;
   char buf[16] = {0};

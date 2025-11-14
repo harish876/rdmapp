@@ -182,7 +182,7 @@ void qp::rtr(uint16_t remote_lid, uint32_t remote_qpn, uint32_t remote_psn,
   struct ibv_qp_attr qp_attr = {};
   ::bzero(&qp_attr, sizeof(qp_attr));
   qp_attr.qp_state = IBV_QPS_RTR;
-  qp_attr.path_mtu = IBV_MTU_4096;
+  qp_attr.path_mtu = pd_->device_ptr()->active_mtu();
   qp_attr.dest_qp_num = remote_qpn;
   qp_attr.rq_psn = remote_psn;
   qp_attr.max_dest_rd_atomic = 16;

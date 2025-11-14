@@ -130,6 +130,13 @@ public:
 
   int gid_index() const;
 
+  /**
+   * @brief Get the active MTU of the port.
+   *
+   * @return enum ibv_mtu The active MTU.
+   */
+  enum ibv_mtu active_mtu() const;
+
   static std::string gid_hex_string(union ibv_gid const &gid);
 
   ~device();
