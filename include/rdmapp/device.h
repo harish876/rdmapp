@@ -5,6 +5,7 @@
 #include <string>
 
 #include <infiniband/verbs.h>
+#include <infiniband/mlx5dv.h>
 
 #include "rdmapp/detail/noncopyable.h"
 
@@ -52,6 +53,8 @@ class device : public noncopyable {
   struct ibv_device_attr_ex device_attr_ex_;
   union ibv_gid gid_;
 
+  struct mlx5dv_context_attr ctx_attr_;
+
   int gid_index_;
   uint16_t port_num_;
   friend class pd;
@@ -82,9 +85,12 @@ public:
    *
    * @param device_num The index of the target device.
    * @param port_num The port number of the target device.
+   * @param gid_index The gid index of the target device.
    */
-  device(uint16_t device_num = 0, uint16_t port_num = 1);
 
+  device(uint16_t device_num = 0, uint16_t port_num = 2, int gid_index = 0);
+  // Previous version
+  //device(uint16_t device_num = 0, uint16_t port_num = 1);
   /**
    * @brief Get the device port number.
    *

@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include <infiniband/verbs.h>
+#include <infiniband/mlx5dv.h>
 
 #include "rdmapp/error.h"
 
@@ -74,15 +75,24 @@ struct ibv_device *device_list::at(size_t i) {
 void device::open_device(struct ibv_device *target, uint16_t port_num) {
   device_ = target;
   port_num_ = port_num;
-  ctx_ = ::ibv_open_device(device_);
+  if(::mlx5dv_is_supported(device_)) {
+    printf("mlx5dv is supported\n");
+    ctx_attr_.flags = MLX5DV_CONTEXT_FLAGS_DEVX;
+    ctx_attr_.comp_mask = 0;
+	  ctx_ = ::mlx5dv_open_device(device_, &ctx_attr_);
+  }
+  else {
+    ctx_ = ::ibv_open_device(device_);
+  }
   check_ptr(ctx_, "failed to open device");
   check_rc(::ibv_query_port(ctx_, port_num_, &port_attr_),
            "failed to query port");
   struct ibv_query_device_ex_input query = {};
   check_rc(::ibv_query_device_ex(ctx_, &query, &device_attr_ex_),
            "failed to query extended attributes");
+  // Removed due to addition of default value
+  // gid_index_ = 0;
 
-  gid_index_ = 0;
   check_rc(::ibv_query_gid(ctx_, port_num, gid_index_, &gid_),
            "failed to query gid");
 
@@ -117,8 +127,8 @@ device::device(std::string const &device_name, uint16_t port_num)
   throw_with("no device named %s found", device_name.c_str());
 }
 
-device::device(uint16_t device_num, uint16_t port_num)
-    : device_(nullptr), port_num_(0) {
+device::device(uint16_t device_num, uint16_t port_num, int gid_index)
+    : device_(nullptr), port_num_(0), gid_index_(gid_index) {
   auto devices = device_list();
   if (device_num >= devices.size()) {
     char buffer[kErrorStringBufferSize] = {0};

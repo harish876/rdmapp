@@ -6,6 +6,11 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 find_package(Threads REQUIRED)
 find_package(ibverbs REQUIRED)
 
+find_library(MLX5_LIB mlx5)
+if(NOT MLX5_LIB)
+  message(FATAL_ERROR "libmlx5 not found. Install rdma-core's user provider libs (e.g., libmlx5).")
+endif()
+
 if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif ()
@@ -56,7 +61,7 @@ set(RDMAPP_SOURCE_FILES
   src/mr.cc
 )
 
-set(RDMAPP_LINK_LIBRARIES ibverbs Threads::Threads)
+set(RDMAPP_LINK_LIBRARIES ibverbs Threads::Threads ${MLX5_LIB})
 
 add_library(rdmapp STATIC ${RDMAPP_SOURCE_FILES})
 
@@ -123,13 +128,14 @@ if (RDMAPP_BUILD_EXAMPLES)
     examples/acceptor.cc
     examples/connector.cc
     examples/qp_transmission.cc
+    examples/chunked_transmission.cc
   )
   add_library(rdmapp_examples STATIC ${RDMAPP_EXAMPLES_LIB_SOURCE_FILES})
   target_compile_options(rdmapp_examples ${RDMAPP_COMPILE_OPTIONS})
   target_include_directories(rdmapp_examples PUBLIC examples/include)
   target_link_libraries(rdmapp_examples PUBLIC rdmapp)
   target_link_options(rdmapp_examples ${RDMAPP_LINK_OPTIONS})
-  set(RDMAPP_EXAMPLES helloworld send_bw write_bw)
+  set(RDMAPP_EXAMPLES helloworld send_bw write_bw chunked_transmission)
   foreach (EXAMPLE IN LISTS RDMAPP_EXAMPLES)
     add_executable(${EXAMPLE} examples/${EXAMPLE}.cc)
     target_link_libraries(${EXAMPLE} rdmapp_examples)

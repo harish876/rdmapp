@@ -9,7 +9,6 @@
 #include <ratio>
 #include <string>
 #include <thread>
-#include <iomanip>
 
 #include <rdmapp/rdmapp.h>
 
@@ -67,7 +66,7 @@ rdmapp::task<void> client(rdmapp::connector &connector) {
 }
 
 int main(int argc, char *argv[]) {
-  auto device = std::make_shared<rdmapp::device>(0, 1, 3);
+  auto device = std::make_shared<rdmapp::device>(0, 1);
   auto pd = std::make_shared<rdmapp::pd>(device);
   auto cq = std::make_shared<rdmapp::cq>(device);
   auto cq_poller = std::make_shared<rdmapp::cq_poller>(cq);
@@ -76,11 +75,7 @@ int main(int argc, char *argv[]) {
   auto reporter = std::thread([&]() {
     while (true) {
       std::this_thread::sleep_for(1s);
-      size_t iops = gSendCount.exchange(0);
-      double throughput_gbps = (static_cast<double>(iops) * 64.0) / 1e9;
-      std::cout << std::fixed << std::setprecision(6)
-                << "IOPS: " << iops 
-                << " | Throughput: " << throughput_gbps << " Gbits/s" << std::endl;
+      std::cout << "IOPS: " << gSendCount.exchange(0) << std::endl;
     }
   });
   if (argc == 2) {

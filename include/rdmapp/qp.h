@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <infiniband/verbs.h>
+#include <infiniband/mlx5dv.h>
 
 #include "rdmapp/cq.h"
 #include "rdmapp/device.h"
@@ -66,6 +67,12 @@ class qp : public noncopyable, public std::enable_shared_from_this<qp> {
    *
    */
   void create();
+
+  /**
+   * @brief Creates a new Queue Pair using mlx5 api.
+   *
+   */
+  void create_mlx5();
 
   /**
    * @brief Initializes the Queue Pair. The Queue Pair will be in the INIT
