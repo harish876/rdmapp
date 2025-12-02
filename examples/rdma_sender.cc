@@ -9,6 +9,7 @@ RDMASender::RDMASender(std::shared_ptr<rdmapp::connector> connector,
                        const Config& config)
     : connector_(connector), config_(config) {
     Logger::set_enabled(config_.enable_logging);
+    Logger::set_level(Logger::level_from_string(config_.logging_level));
     Logger::info() << "Sender: Initialized with MTU=" << config_.mtu 
               << ", chunk_size=" << config_.chunk_size;
 }

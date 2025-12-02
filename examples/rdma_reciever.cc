@@ -1,6 +1,9 @@
 #include "rdma_logger.h"
 #include "rdma_receiver.h"
+#include "rdma_util.h"
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -9,7 +12,6 @@
 #include <unistd.h>
 
 #include <infiniband/verbs.h>
-#include <algorithm>
 
 namespace RDMA_EC {
 
@@ -18,6 +20,7 @@ RDMAReceiver::RDMAReceiver(std::shared_ptr<rdmapp::acceptor> acceptor,
                            const Config &config)
     : acceptor_(acceptor), recv_cq_(recv_cq), config_(config) {
   Logger::set_enabled(config_.enable_logging);
+    Logger::set_level(Logger::level_from_string(config_.logging_level));
   Logger::info() << "Receiver: Initialized with MTU=" << config_.mtu
                  << ", chunk_size=" << config_.chunk_size;
   oob_buffer_.resize(1);
@@ -149,9 +152,26 @@ rdmapp::task<void> RDMAReceiver::send_cts(size_t buffer_size) {
   CTSInfo cts;
   cts.remote_addr = reinterpret_cast<uint64_t>(recv_buffer_);
   cts.rkey = local_mr_->rkey();
-  cts.buffer_size = buffer_size;
   cts.total_packets = total_packets_;
+  cts.buffer_size = buffer_size;
   cts.msg_id = current_msg_id_++;
+
+  co_await qp_->send(&cts, sizeof(cts));
+
+  Logger::info() << "Receiver: Sent CTS - addr=0x" << std::hex
+                 << cts.remote_addr << ", rkey=0x" << cts.rkey << std::dec;
+
+  co_return;
+}
+
+rdmapp::task<void> RDMAReceiver::send_cts(size_t buffer_size, uint8_t msg_id) {
+  CTSInfo cts;
+  cts.remote_addr = reinterpret_cast<uint64_t>(recv_buffer_);
+  cts.rkey = local_mr_->rkey();
+  cts.total_packets = total_packets_;
+
+  cts.buffer_size = buffer_size;
+  cts.msg_id = msg_id;
 
   co_await qp_->send(&cts, sizeof(cts));
 
@@ -337,7 +357,8 @@ void RDMAReceiver::process_completions() {
         in_flight_receives_.fetch_sub(1, std::memory_order_acq_rel);
         // If configured, immediately repost a receive to keep the queue full
         if (config_.post_per_completion) {
-          size_t total_posted = total_posted_receives_.load(std::memory_order_acquire);
+          size_t total_posted =
+              total_posted_receives_.load(std::memory_order_acquire);
           if (total_posted < total_packets_) {
             post_single_receive();
             total_posted_receives_.fetch_add(1, std::memory_order_acq_rel);
@@ -354,7 +375,8 @@ void RDMAReceiver::process_completions() {
 
       // If configured, immediately repost a receive to keep the queue full
       if (config_.post_per_completion) {
-        size_t total_posted = total_posted_receives_.load(std::memory_order_acquire);
+        size_t total_posted =
+            total_posted_receives_.load(std::memory_order_acquire);
         if (total_posted < total_packets_) {
           post_single_receive();
           total_posted_receives_.fetch_add(1, std::memory_order_acq_rel);
@@ -427,42 +449,47 @@ void RDMAReceiver::process_completions() {
       }
     }
 
-  // Sliding-window refill: if the number of in-flight receives drops below
-  // a low watermark (e.g. 1/4 of batch), post additional receives to bring
-  // the window back up to batch_size. This avoids the gap when waiting for
-  // a whole batch to drain. Disabled when post_per_completion is enabled.
-  if (!config_.post_per_completion) {
-    size_t in_flight_now = in_flight_receives_.load(std::memory_order_acquire);
-    size_t total_posted = total_posted_receives_.load(std::memory_order_acquire);
-    if (total_posted < total_packets_) {
-      size_t batch_size_cfg = config_.max_in_flight_requests > 0
-                                  ? config_.max_in_flight_requests
-                                  : 1024;
+    // Sliding-window refill: if the number of in-flight receives drops below
+    // a low watermark (e.g. 1/4 of batch), post additional receives to bring
+    // the window back up to batch_size. This avoids the gap when waiting for
+    // a whole batch to drain. Disabled when post_per_completion is enabled.
+    if (!config_.post_per_completion) {
+      size_t in_flight_now =
+          in_flight_receives_.load(std::memory_order_acquire);
+      size_t total_posted =
+          total_posted_receives_.load(std::memory_order_acquire);
+      if (total_posted < total_packets_) {
+        size_t batch_size_cfg = config_.max_in_flight_requests > 0
+                                    ? config_.max_in_flight_requests
+                                    : 1024;
 
-      size_t low_watermark = std::max((size_t)1, batch_size_cfg / 4);
+        size_t low_watermark = std::max((size_t)1, batch_size_cfg / 4);
 
-      if (in_flight_now <= low_watermark) {
-        // target in-flight after refill is min(batch_size_cfg, remaining+in_flight_now)
-        size_t remaining = total_packets_ - total_posted;
-        size_t target = std::min(batch_size_cfg, in_flight_now + remaining);
-        size_t to_post = (target > in_flight_now) ? (target - in_flight_now) : 0;
+        if (in_flight_now <= low_watermark) {
+          // target in-flight after refill is min(batch_size_cfg,
+          // remaining+in_flight_now)
+          size_t remaining = total_packets_ - total_posted;
+          size_t target = std::min(batch_size_cfg, in_flight_now + remaining);
+          size_t to_post =
+              (target > in_flight_now) ? (target - in_flight_now) : 0;
 
-        if (to_post > 0) {
-          Logger::debug() << "Receiver: Low in-flight (" << in_flight_now
-                          << "), posting " << to_post
-                          << " receives to refill window (batch_size="
-                          << batch_size_cfg << ", remaining=" << remaining
-                          << ")";
+          if (to_post > 0) {
+            Logger::debug()
+                << "Receiver: Low in-flight (" << in_flight_now << "), posting "
+                << to_post
+                << " receives to refill window (batch_size=" << batch_size_cfg
+                << ", remaining=" << remaining << ")";
 
-          for (size_t i = 0; i < to_post; ++i) {
-            post_single_receive();
+            for (size_t i = 0; i < to_post; ++i) {
+              post_single_receive();
+            }
+
+            total_posted_receives_.fetch_add(to_post,
+                                             std::memory_order_acq_rel);
+            in_flight_receives_.fetch_add(to_post, std::memory_order_acq_rel);
           }
-
-          total_posted_receives_.fetch_add(to_post, std::memory_order_acq_rel);
-          in_flight_receives_.fetch_add(to_post, std::memory_order_acq_rel);
         }
       }
-    }
     }
 
     size_t received_count = packets_received_.load(std::memory_order_acquire);

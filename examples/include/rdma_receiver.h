@@ -31,6 +31,9 @@ private:
   // Send CTS to sender
   rdmapp::task<void> send_cts(size_t buffer_size);
 
+  // Send CTS to sender overloaded
+  rdmapp::task<void> send_cts(size_t buffer_size, uint8_t msg_id);
+
   // Post receive requests for immediates (initial batch)
   rdmapp::task<void> post_receives(size_t count);
 

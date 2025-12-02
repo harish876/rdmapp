@@ -25,9 +25,9 @@ public:
     int receiver_timeout_seconds = DEFAULT_RECEIVER_TIMEOUT_SECONDS;
     enum ibv_qp_type transport_type = DEFAULT_RDMA_TRANSPORT;
     bool enable_logging = DEFAULT_ENABLE_LOGGING;
+    std::string logging_level = "info";
     size_t max_in_flight_requests = 1024;
-    // If true, post a new receive immediately for each consumed WR
-    bool post_per_completion = false;
+    bool post_per_completion = false; // If true, post a new receive immediately for each consumed WR
 
 
     bool load_from_file(const std::string& filepath);

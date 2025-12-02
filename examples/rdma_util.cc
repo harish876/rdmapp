@@ -80,6 +80,16 @@ bool Config::parse_line(const std::string &line) {
       } else if (value == "false" || value == "0" || value == "no") {
         enable_logging = false;
       }
+    } else if (key == "logging_level") {
+      std::transform(value.begin(), value.end(), value.begin(),
+                     [](unsigned char c) { return std::tolower(c); });
+      if (value == "debug" || value == "info" || value == "error") {
+        logging_level = value;
+      } else {
+        std::cerr << "[Config] Warning: Unknown logging_level value: " << value
+                  << " (expected debug/info/error). Using existing"
+                  << std::endl;
+      }
     } else if (key == "max_in_flight_requests") {
       max_in_flight_requests = std::stoull(value);
     } else if (key == "post_per_completion") {
@@ -153,8 +163,10 @@ bool Config::save_to_file(const std::string &filepath) const {
   file << "cpu_core_id=" << cpu_core_id << "\n";
   file << "receiver_timeout_seconds=" << receiver_timeout_seconds << "\n";
   file << "enable_logging=" << (enable_logging ? "true" : "false") << "\n";
+  file << "logging_level=" << logging_level << "\n";
   file << "max_in_flight_requests=" << max_in_flight_requests << "\n";
-  file << "post_per_completion=" << (post_per_completion ? "true" : "false") << "\n";
+  file << "post_per_completion=" << (post_per_completion ? "true" : "false")
+       << "\n";
 
   file.close();
 
@@ -173,8 +185,11 @@ void Config::print() const {
             << std::endl;
   std::cout << "  enable_logging = " << (enable_logging ? "true" : "false")
             << std::endl;
-  std::cout << "  max_in_flight_requests = " << max_in_flight_requests << std::endl;
-  std::cout << "  post_per_completion = " << (post_per_completion ? "true" : "false") << std::endl;
+  std::cout << "  logging_level = " << logging_level << std::endl;
+  std::cout << "  max_in_flight_requests = " << max_in_flight_requests
+            << std::endl;
+  std::cout << "  post_per_completion = "
+            << (post_per_completion ? "true" : "false") << std::endl;
 }
 
 } // namespace RDMA_EC

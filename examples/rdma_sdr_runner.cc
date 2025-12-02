@@ -4,15 +4,15 @@
 #include "rdma_receiver.h"
 #include "rdma_sender.h"
 #include "rdma_util.h"
-#include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <future>
 #include <iostream>
 #include <optional>
-#include <random>
 #include <thread>
+#include <string>
 #include <unistd.h>
 
 #include <infiniband/verbs.h>
@@ -20,6 +20,126 @@
 #include <rdmapp/rdmapp.h>
 
 using namespace RDMA_EC;
+
+namespace {
+
+constexpr const char *kDefaultConfigPath = "./examples/rdma.config";
+
+enum class RunnerRole { Server, Client };
+
+enum class ParseResult { Ok, Help, Error };
+
+struct ProgramOptions {
+  RunnerRole role;
+  int port{8011}; //default port
+  std::string host;
+  std::optional<std::string> config_path;
+  std::optional<std::string> log_level;
+};
+
+void print_usage(const char *program) {
+  std::cout << "Usage:\n"
+            << "  " << program
+            << " server --port <port> [--config <path>]\n"
+            << "  " << program
+            << " client --host <host> --port <port> [--config <path>] [--log-level <level>]\n"
+            << "\nOptions:\n"
+            << "  --config <path>   Path to configuration file (default: "
+            << kDefaultConfigPath << ")\n"
+            << "  --log-level <lvl> Logging level: debug, info, error (default from config)\n"
+            << "  --help            Show this message and exit\n";
+}
+
+ParseResult parse_arguments(int argc, char *argv[], ProgramOptions &options) {
+  if (argc < 2) {
+    Logger::error() << "Missing role argument (server/client)";
+    print_usage(argc > 0 ? argv[0] : "rdma_sdr_runner");
+    return ParseResult::Error;
+  }
+
+  std::string role_arg = argv[1];
+  if (role_arg == "--help" || role_arg == "-h") {
+    print_usage(argc > 0 ? argv[0] : "rdma_sdr_runner");
+    return ParseResult::Help;
+  }
+
+  if (role_arg == "server") {
+    options.role = RunnerRole::Server;
+  } else if (role_arg == "client") {
+    options.role = RunnerRole::Client;
+  } else {
+    Logger::error() << "Unknown role: " << role_arg;
+    print_usage(argv[0]);
+    return ParseResult::Error;
+  }
+
+  for (int i = 2; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg == "--port") {
+      if (i + 1 >= argc) {
+        Logger::error() << "--port expects an integer value";
+        return ParseResult::Error;
+      }
+      try {
+        options.port = std::stoi(argv[++i]);
+      } catch (const std::exception &e) {
+        Logger::error() << "Invalid port: " << argv[i] << " (" << e.what()
+                        << ")";
+        return ParseResult::Error;
+      }
+    } else if (arg == "--host") {
+      if (i + 1 >= argc) {
+        Logger::error() << "--host expects an address";
+        return ParseResult::Error;
+      }
+      options.host = argv[++i];
+    } else if (arg == "--config") {
+      if (i + 1 >= argc) {
+        Logger::error() << "--config expects a file path";
+        return ParseResult::Error;
+      }
+      options.config_path = argv[++i];
+    } else if (arg == "--log-level") {
+      if (i + 1 >= argc) {
+        Logger::error() << "--log-level expects a value (debug/info/error)";
+        return ParseResult::Error;
+      }
+      std::string level = argv[++i];
+      std::transform(level.begin(), level.end(), level.begin(),
+                     [](unsigned char c) { return std::tolower(c); });
+      if (level != "debug" && level != "info" && level != "error") {
+        Logger::error() << "Unknown log level: " << level;
+        return ParseResult::Error;
+      }
+      options.log_level = level;
+    } else if (arg == "--help" || arg == "-h") {
+      print_usage(argv[0]);
+      return ParseResult::Help;
+    } else {
+      Logger::error() << "Unknown argument: " << arg;
+      print_usage(argv[0]);
+      return ParseResult::Error;
+    }
+  }
+
+  if (options.port <= 0 || options.port > 65535) {
+    Logger::error() << "Port must be within 1-65535";
+    return ParseResult::Error;
+  }
+
+  if (options.role == RunnerRole::Client && options.host.empty()) {
+    Logger::error() << "Client mode requires --host";
+    return ParseResult::Error;
+  }
+
+  if (!options.config_path.has_value()) {
+    options.config_path = std::string(kDefaultConfigPath);
+  }
+
+  return ParseResult::Ok;
+}
+
+} // namespace
 
 void *allocate_test_data(size_t size) {
   void *buffer = nullptr;
@@ -99,6 +219,17 @@ bool verify_data(const std::vector<uint8_t> &sent,
 int main(int argc, char *argv[]) {
   srand(42);
 
+  ProgramOptions options;
+  switch (parse_arguments(argc, argv, options)) {
+  case ParseResult::Ok:
+    break;
+  case ParseResult::Help:
+    return 0;
+  case ParseResult::Error:
+  default:
+    return 1;
+  }
+
   auto device = std::make_shared<rdmapp::device>(0, 1, 3);
   auto pd = std::make_shared<rdmapp::pd>(device);
   std::shared_ptr<rdmapp::cq_poller> recv_cq_poller;
@@ -111,21 +242,9 @@ int main(int argc, char *argv[]) {
 
   try {
     Config config;
-    std::string config_file;
 
-    bool is_client_mode =
-        (argc >= 3 && std::string(argv[1]).find('.') != std::string::npos);
-
-    if (argc >= 3) {
-      std::string last_arg = argv[argc - 1];
-      if (last_arg.find("config") != std::string::npos ||
-          (last_arg.find('.') != std::string::npos &&
-           last_arg.find('/') != std::string::npos)) {
-        config_file = last_arg;
-      }
-    }
-
-    if (!config_file.empty()) {
+    if (options.config_path) {
+      const std::string &config_file = *options.config_path;
       if (config.load_from_file(config_file)) {
         Logger::info() << "Loaded configuration from " << config_file;
         config.print();
@@ -134,41 +253,40 @@ int main(int argc, char *argv[]) {
       }
     }
 
-  Logger::set_enabled(config.enable_logging);
-  Logger::set_level(Logger::level_from_string(config.logging_level));
+    if (options.log_level) {
+      config.logging_level = *options.log_level; //override the log level in config
+    }
+
+    Logger::set_enabled(config.enable_logging);
+    Logger::set_level(Logger::level_from_string(config.logging_level));
 
     size_t buffer_size = config.buffer_size;
-
-    if (!is_client_mode) {
-      // Server mode: [port] [config_file] - acts as receiver (listens for
-      // connections)
-      int port = std::stoi(argv[1]);
+    if (options.role == RunnerRole::Server) {
+      int port = options.port;
       Logger::info() << "Starting as RECEIVER on port " << port;
 
-      config.buffer_size = buffer_size * 2;
+      Config receiver_config = config;
+      receiver_config.buffer_size = buffer_size * 2;
 
       auto send_cq = std::make_shared<rdmapp::cq>(device, 2048);
       auto recv_cq = std::make_shared<rdmapp::cq>(device, 2048);
 
-      // Create cq_poller for receiver's SEND completions (for CTS message)
-      // NOTE: The receiver's completion thread polls recv_cq for receive
-      // completions (packets). But we need a cq_poller on send_cq to process
-      // send completions (CTS message)
       send_cq_poller = std::make_shared<rdmapp::cq_poller>(send_cq);
 
       auto acceptor = std::make_shared<rdmapp::acceptor>(
-          loop, port, pd, recv_cq, send_cq, nullptr, config.transport_type);
+          loop, port, pd, recv_cq, send_cq, nullptr, receiver_config.transport_type);
 
       rdmapp::task<void> receiver_task = [acceptor, recv_cq, buffer_size,
-                                          config]() -> rdmapp::task<void> {
-        RDMAReceiver receiver(acceptor, recv_cq, config);
+                                          receiver_config]() -> rdmapp::task<void> {
+        RDMAReceiver receiver(acceptor, recv_cq, receiver_config);
 
         Logger::info() << "\n=== RECEIVER STARTING ===" << std::endl;
         Logger::info() << "Expecting " << buffer_size << " bytes";
-        Logger::info() << "MTU: " << config.mtu
-                       << ", Chunk size: " << config.chunk_size;
+        Logger::info() << "MTU: " << receiver_config.mtu
+                       << ", Chunk size: " << receiver_config.chunk_size;
         Logger::info() << ", Transport Type: "
-                       << ((config.transport_type == IBV_QPT_RC) ? "RC" : "UC");
+                       << ((receiver_config.transport_type == IBV_QPT_RC) ? "RC"
+                                                                          : "UC");
 
         auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -198,16 +316,14 @@ int main(int argc, char *argv[]) {
       }();
       receiver_future = std::move(receiver_task.get_future());
       receiver_task.detach();
-    } else if (argc >= 3) {
-      // Client mode: [receiver_ip] [port] [config_file] - acts as sender
-      // (connects to receiver)
-      std::string receiver_ip = argv[1];
-      int port_idx = 2;
-      int port = std::stoi(argv[port_idx]);
+    } else if (options.role == RunnerRole::Client) {
+      std::string receiver_ip = options.host;
+      int port = options.port;
       Logger::info() << "Starting as SENDER connecting to " << receiver_ip
                      << ":" << port;
 
-      config.buffer_size = buffer_size * 2;
+      Config sender_config = config;
+      sender_config.buffer_size = buffer_size * 2;
 
       auto send_cq = std::make_shared<rdmapp::cq>(device, 2048);
       auto recv_cq = std::make_shared<rdmapp::cq>(device, 2048);
@@ -217,11 +333,11 @@ int main(int argc, char *argv[]) {
 
       auto connector = std::make_shared<rdmapp::connector>(
           loop, receiver_ip, port, pd, recv_cq, send_cq, nullptr,
-          config.transport_type);
+          sender_config.transport_type);
 
       rdmapp::task<void> sender_task = [connector, buffer_size,
-                                        config]() -> rdmapp::task<void> {
-        RDMASender sender(connector, config);
+                                        sender_config]() -> rdmapp::task<void> {
+        RDMASender sender(connector, sender_config);
 
         void *large_data_buffer = allocate_test_data(buffer_size);
         if (!large_data_buffer) {
@@ -231,8 +347,8 @@ int main(int argc, char *argv[]) {
 
         Logger::info() << "\n=== SENDER STARTING ===";
         Logger::info() << "Sending " << buffer_size << " bytes";
-        Logger::info() << "MTU: " << config.mtu
-                       << ", Chunk size: " << config.chunk_size;
+        Logger::info() << "MTU: " << sender_config.mtu
+                       << ", Chunk size: " << sender_config.chunk_size;
 
         auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -264,19 +380,11 @@ int main(int argc, char *argv[]) {
       sender_future = std::move(sender_task.get_future());
       sender_task.detach();
     } else {
-      Logger::error() << "Usage:";
-      Logger::error() << "  Receiver (server): " << argv[0]
-                      << " <port> [config_file]";
-      Logger::error() << "  Sender (client):   " << argv[0]
-                      << " <receiver_ip> <port> [config_file]";
-      Logger::error() << "";
-      Logger::error()
-          << "  config_file: Optional path to .config file (default: use "
-             "built-in defaults)";
+      Logger::error() << "Unsupported role configuration";
       return 1;
     }
 
-    if (!is_client_mode && receiver_future.has_value()) {
+    if (options.role == RunnerRole::Server && receiver_future.has_value()) {
       try {
         receiver_future->wait();
         receiver_future->get();
@@ -284,7 +392,8 @@ int main(int argc, char *argv[]) {
       } catch (const std::exception &e) {
         Logger::error() << "Receiver task failed: " << e.what();
       }
-    } else if (is_client_mode && sender_future.has_value()) {
+    } else if (options.role == RunnerRole::Client &&
+               sender_future.has_value()) {
       try {
         sender_future->wait();
         sender_future->get();
