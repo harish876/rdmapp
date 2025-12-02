@@ -25,7 +25,6 @@ public:
     int receiver_timeout_seconds = DEFAULT_RECEIVER_TIMEOUT_SECONDS;
     enum ibv_qp_type transport_type = DEFAULT_RDMA_TRANSPORT;
     bool enable_logging = DEFAULT_ENABLE_LOGGING;
-    // Maximum number of posted receive work requests to keep in flight
     size_t max_in_flight_requests = 1024;
 
 

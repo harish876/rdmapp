@@ -40,9 +40,8 @@ bool Config::parse_line(const std::string &line) {
   std::string value = trim(trimmed.substr(eq_pos + 1));
 
   // Strip quotes from value if present
-  if (value.size() >= 2 && 
-      ((value.front() == '"' && value.back() == '"') ||
-       (value.front() == '\'' && value.back() == '\''))) {
+  if (value.size() >= 2 && ((value.front() == '"' && value.back() == '"') ||
+                            (value.front() == '\'' && value.back() == '\''))) {
     value = value.substr(1, value.size() - 2);
   }
 
@@ -70,7 +69,7 @@ bool Config::parse_line(const std::string &line) {
       } else if (value == "uc") {
         transport_type = IBV_QPT_UC;
       } else {
-        std::cerr << "[Config] Warning: Unknown transport_type value: " << value 
+        std::cerr << "[Config] Warning: Unknown transport_type value: " << value
                   << " (expected 'rc' or 'uc'). Using default." << std::endl;
       }
     } else if (key == "enable_logging") {
@@ -81,6 +80,8 @@ bool Config::parse_line(const std::string &line) {
       } else if (value == "false" || value == "0" || value == "no") {
         enable_logging = false;
       }
+    } else if (key == "max_in_flight_requests") {
+      max_in_flight_requests = std::stoi(value);
     } else {
       std::cerr << "[Config] Unknown Config key: " << key << std::endl;
       return true;
@@ -117,7 +118,8 @@ bool Config::load_from_file(const std::string &filepath) {
 
   file.close();
 
-  // Config loading messages use std::cout directly (before logger is initialized)
+  // Config loading messages use std::cout directly (before logger is
+  // initialized)
   std::cout << "[Config] Loaded configuration from " << filepath << std::endl;
   if (has_errors) {
     std::cerr << "[Config] Some errors occurred while parsing config file"
@@ -159,7 +161,8 @@ void Config::print() const {
   std::cout << "  cpu_core_id = " << cpu_core_id << std::endl;
   std::cout << "  receiver_timeout_seconds = " << receiver_timeout_seconds
             << std::endl;
-  std::cout << "  enable_logging = " << (enable_logging ? "true" : "false") << std::endl;
+  std::cout << "  enable_logging = " << (enable_logging ? "true" : "false")
+            << std::endl;
 }
 
 } // namespace RDMA_EC
