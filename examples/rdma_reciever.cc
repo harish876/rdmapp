@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include <infiniband/verbs.h>
+#include <algorithm>
 
 namespace RDMA_EC {
 
@@ -98,8 +99,7 @@ rdmapp::task<void> RDMAReceiver::receive_data(size_t expected_size) {
   Logger::info() << "Receiver: Verified dummy_recv_mr_ is set (addr=0x"
                  << std::hex
                  << reinterpret_cast<uint64_t>(oob_buffer_mr_->addr())
-                 << std::dec << ", length=" << oob_buffer_mr_->length() <<
-                 ")";
+                 << std::dec << ", length=" << oob_buffer_mr_->length() << ")";
 
   Logger::info() << "Receiver: Pre-thread checks - packet_bitmap_.size()="
                  << packet_bitmap_.size()
@@ -166,9 +166,9 @@ rdmapp::task<void> RDMAReceiver::post_receives(size_t count) {
   oob_buffer_mr_ = std::make_shared<rdmapp::local_mr>(
       pd->reg_mr(oob_buffer_.data(), oob_buffer_.size()));
 
-  // Post initial batch of receives - we post just enough to handle the transfer.
-  // We use the config_.max_in_flight_requests to control batch size. The
-  // backend thread will post the next batch only after the current batch
+  // Post initial batch of receives - we post just enough to handle the
+  // transfer. We use the config_.max_in_flight_requests to control batch size.
+  // The backend thread will post the next batch only after the current batch
   // completes (in_flight_receives_ reaches zero).
   size_t needed_receives = count;
   size_t batch_size = config_.max_in_flight_requests > 0
@@ -277,7 +277,8 @@ void RDMAReceiver::process_completions() {
   std::vector<struct ibv_wc> wc_vec(batch_size);
   size_t total_polled = 0;
   size_t total_with_imm = 0;
-  // receives_to_repost removed - backend now manages batches via in_flight_receives_
+  // receives_to_repost removed - backend now manages batches via
+  // in_flight_receives_
 
   // Poll very aggressively - we need to get completions before cq_poller does
   // because cq_poller will consume them from the CQ even if it skips processing
@@ -294,7 +295,7 @@ void RDMAReceiver::process_completions() {
                       << " completions (total polled: " << total_polled;
     }
 
-  // reset per-iteration counters handled via in_flight_receives_
+    // reset per-iteration counters handled via in_flight_receives_
 
     for (size_t i = 0; i < num_completions; ++i) {
       const auto &wc = wc_vec[i];
@@ -324,9 +325,9 @@ void RDMAReceiver::process_completions() {
         continue;
       }
 
-  // Each completion consumes one posted receive work request. We decrement
-  // the in-flight counter here. The backend will post a new batch when
-  // the in-flight count reaches zero.
+      // Each completion consumes one posted receive work request. We decrement
+      // the in-flight counter here. The backend will post a new batch when
+      // the in-flight count reaches zero.
 
       // Check completion status
       if (wc.status != IBV_WC_SUCCESS) {
@@ -407,26 +408,40 @@ void RDMAReceiver::process_completions() {
       }
     }
 
-    // If the in-flight batch has drained, post the next batch (if any)
+    // Sliding-window refill: if the number of in-flight receives drops below
+    // a low watermark (e.g. 1/4 of batch), post additional receives to bring
+    // the window back up to batch_size. This avoids the gap when waiting for
+    // a whole batch to drain.
     size_t in_flight_now = in_flight_receives_.load(std::memory_order_acquire);
     size_t total_posted = total_posted_receives_.load(std::memory_order_acquire);
-    if (in_flight_now == 0 && total_posted < total_packets_) {
+    if (total_posted < total_packets_) {
       size_t batch_size_cfg = config_.max_in_flight_requests > 0
                                   ? config_.max_in_flight_requests
                                   : 1024;
-      size_t remaining = total_packets_ - total_posted;
-      size_t next_batch = std::min(remaining, batch_size_cfg);
 
-      Logger::info() << "Receiver: Batch drained; posting next batch of "
-                     << next_batch << " receives (remaining=" << remaining
-                     << ")";
+      size_t low_watermark = std::max((size_t)1, batch_size_cfg / 4);
 
-      for (size_t i = 0; i < next_batch; ++i) {
-        post_single_receive();
+      if (in_flight_now <= low_watermark) {
+        // target in-flight after refill is min(batch_size_cfg, remaining+in_flight_now)
+        size_t remaining = total_packets_ - total_posted;
+        size_t target = std::min(batch_size_cfg, in_flight_now + remaining);
+        size_t to_post = (target > in_flight_now) ? (target - in_flight_now) : 0;
+
+        if (to_post > 0) {
+          Logger::debug() << "Receiver: Low in-flight (" << in_flight_now
+                          << "), posting " << to_post
+                          << " receives to refill window (batch_size="
+                          << batch_size_cfg << ", remaining=" << remaining
+                          << ")";
+
+          for (size_t i = 0; i < to_post; ++i) {
+            post_single_receive();
+          }
+
+          total_posted_receives_.fetch_add(to_post, std::memory_order_acq_rel);
+          in_flight_receives_.fetch_add(to_post, std::memory_order_acq_rel);
+        }
       }
-
-      total_posted_receives_.fetch_add(next_batch, std::memory_order_acq_rel);
-      in_flight_receives_.store(next_batch, std::memory_order_release);
     }
 
     size_t received_count = packets_received_.load(std::memory_order_acquire);
