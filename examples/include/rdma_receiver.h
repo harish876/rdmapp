@@ -66,6 +66,12 @@ private:
   size_t total_chunks_{0};
   size_t expected_size_{0};
 
+  // Receive posting / in-flight tracking
+  // Number of receive WRs currently in flight (posted but not yet completed)
+  std::atomic<size_t> in_flight_receives_{0};
+  // Total number of receives we've posted so far (cumulative)
+  std::atomic<size_t> total_posted_receives_{0};
+
   // Background threads for processing
   std::thread completion_thread_;
   std::thread frontend_thread_;
