@@ -464,8 +464,8 @@ int main(int argc, char *argv[]) {
       Config sender_config = config;
       sender_config.buffer_size = buffer_size * 2;
 
-      auto send_cq = std::make_shared<rdmapp::cq>(device, 2048);
-      auto recv_cq = std::make_shared<rdmapp::cq>(device, 2048);
+      auto send_cq = std::make_shared<rdmapp::cq>(device, config.rx_depth);
+      auto recv_cq = std::make_shared<rdmapp::cq>(device, config.rx_depth);
 
       auto send_cq_poller = std::make_shared<rdmapp::cq_poller>(send_cq);
       auto recv_cq_poller = std::make_shared<rdmapp::cq_poller>(recv_cq);
