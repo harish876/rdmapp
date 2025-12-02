@@ -335,6 +335,15 @@ void RDMAReceiver::process_completions() {
                         << ", opcode=" << wc.opcode;
         // Even on error we consider the WR consumed and decrement in-flight.
         in_flight_receives_.fetch_sub(1, std::memory_order_acq_rel);
+        // If configured, immediately repost a receive to keep the queue full
+        if (config_.post_per_completion) {
+          size_t total_posted = total_posted_receives_.load(std::memory_order_acquire);
+          if (total_posted < total_packets_) {
+            post_single_receive();
+            total_posted_receives_.fetch_add(1, std::memory_order_acq_rel);
+            in_flight_receives_.fetch_add(1, std::memory_order_acq_rel);
+          }
+        }
         continue;
       }
 
@@ -342,6 +351,16 @@ void RDMAReceiver::process_completions() {
       // in-flight counter now so that any early 'continue' paths still reflect
       // the consumed WR.
       in_flight_receives_.fetch_sub(1, std::memory_order_acq_rel);
+
+      // If configured, immediately repost a receive to keep the queue full
+      if (config_.post_per_completion) {
+        size_t total_posted = total_posted_receives_.load(std::memory_order_acquire);
+        if (total_posted < total_packets_) {
+          post_single_receive();
+          total_posted_receives_.fetch_add(1, std::memory_order_acq_rel);
+          in_flight_receives_.fetch_add(1, std::memory_order_acq_rel);
+        }
+      }
 
       // Check if this completion has an immediate value
       if (wc.wc_flags & IBV_WC_WITH_IMM) {
@@ -408,10 +427,11 @@ void RDMAReceiver::process_completions() {
       }
     }
 
-    // Sliding-window refill: if the number of in-flight receives drops below
-    // a low watermark (e.g. 1/4 of batch), post additional receives to bring
-    // the window back up to batch_size. This avoids the gap when waiting for
-    // a whole batch to drain.
+  // Sliding-window refill: if the number of in-flight receives drops below
+  // a low watermark (e.g. 1/4 of batch), post additional receives to bring
+  // the window back up to batch_size. This avoids the gap when waiting for
+  // a whole batch to drain. Disabled when post_per_completion is enabled.
+  if (!config_.post_per_completion) {
     size_t in_flight_now = in_flight_receives_.load(std::memory_order_acquire);
     size_t total_posted = total_posted_receives_.load(std::memory_order_acquire);
     if (total_posted < total_packets_) {
@@ -442,6 +462,7 @@ void RDMAReceiver::process_completions() {
           in_flight_receives_.fetch_add(to_post, std::memory_order_acq_rel);
         }
       }
+    }
     }
 
     size_t received_count = packets_received_.load(std::memory_order_acquire);

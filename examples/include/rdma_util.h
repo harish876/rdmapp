@@ -26,6 +26,8 @@ public:
     enum ibv_qp_type transport_type = DEFAULT_RDMA_TRANSPORT;
     bool enable_logging = DEFAULT_ENABLE_LOGGING;
     size_t max_in_flight_requests = 1024;
+    // If true, post a new receive immediately for each consumed WR
+    bool post_per_completion = false;
 
 
     bool load_from_file(const std::string& filepath);
