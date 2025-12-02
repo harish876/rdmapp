@@ -6,6 +6,7 @@
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 
 #include <infiniband/verbs.h>
 
@@ -59,7 +60,11 @@ bool Config::parse_line(const std::string &line) {
       buffer_size = std::stoull(value);
     } else if (key == "cpu_core_id") {
       cpu_core_id = std::stoi(value);
-    } else if (key == "receiver_timeout_seconds") {
+    } else if(key == "rx_depth") {
+      rx_depth = std::stoi(value);
+    }
+    
+    else if (key == "receiver_timeout_seconds") {
       receiver_timeout_seconds = std::stoi(value);
     } else if (key == "transport_type") {
       std::transform(value.begin(), value.end(), value.begin(),
@@ -161,6 +166,7 @@ bool Config::save_to_file(const std::string &filepath) const {
   file << "chunk_size=" << chunk_size << "\n";
   file << "buffer_size=" << buffer_size << "\n";
   file << "cpu_core_id=" << cpu_core_id << "\n";
+  file << "rx_depth=" << rx_depth << "\n";
   file << "receiver_timeout_seconds=" << receiver_timeout_seconds << "\n";
   file << "enable_logging=" << (enable_logging ? "true" : "false") << "\n";
   file << "logging_level=" << logging_level << "\n";
@@ -181,6 +187,7 @@ void Config::print() const {
   std::cout << "  chunk_size = " << chunk_size << std::endl;
   std::cout << "  buffer_size = " << buffer_size << std::endl;
   std::cout << "  cpu_core_id = " << cpu_core_id << std::endl;
+  std::cout << "  rx_depth = " << rx_depth << std::endl;
   std::cout << "  receiver_timeout_seconds = " << receiver_timeout_seconds
             << std::endl;
   std::cout << "  enable_logging = " << (enable_logging ? "true" : "false")

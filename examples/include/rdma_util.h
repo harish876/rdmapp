@@ -13,6 +13,10 @@ constexpr size_t DEFAULT_CHUNK_SIZE = 16;  // packets per chunk
 constexpr size_t DEFAULT_BUFFER_SIZE = 1024 * 1024;  // 1MB
 constexpr int DEFAULT_RECEIVER_TIMEOUT_SECONDS = 10;
 constexpr bool DEFAULT_ENABLE_LOGGING = true;
+constexpr const char *DEFAULT_LOGGING_LEVEL = "info";
+constexpr size_t DEFAULT_MAX_IN_FLIGHT_REQUESTS = 1024;
+constexpr bool DEFAULT_POST_PER_COMPLETION = false;
+constexpr size_t DEFAULT_RX_DEPTH = 2048;
 extern enum ibv_qp_type DEFAULT_RDMA_TRANSPORT;
 
 // Configuration for RDMA transport
@@ -25,9 +29,10 @@ public:
     int receiver_timeout_seconds = DEFAULT_RECEIVER_TIMEOUT_SECONDS;
     enum ibv_qp_type transport_type = DEFAULT_RDMA_TRANSPORT;
     bool enable_logging = DEFAULT_ENABLE_LOGGING;
-    std::string logging_level = "info";
-    size_t max_in_flight_requests = 1024;
-    bool post_per_completion = false; // If true, post a new receive immediately for each consumed WR
+    std::string logging_level = DEFAULT_LOGGING_LEVEL;
+    size_t max_in_flight_requests = DEFAULT_MAX_IN_FLIGHT_REQUESTS;
+    bool post_per_completion = DEFAULT_POST_PER_COMPLETION; // If true, post a new receive immediately for each consumed WR
+    size_t rx_depth = DEFAULT_RX_DEPTH;
 
 
     bool load_from_file(const std::string& filepath);
