@@ -20,7 +20,7 @@ RDMAReceiver::RDMAReceiver(std::shared_ptr<rdmapp::acceptor> acceptor,
                            const Config &config)
     : acceptor_(acceptor), recv_cq_(recv_cq), config_(config) {
   Logger::set_enabled(config_.enable_logging);
-    Logger::set_level(Logger::level_from_string(config_.logging_level));
+  Logger::set_level(Logger::level_from_string(config_.logging_level));
   Logger::info() << "Receiver: Initialized with MTU=" << config_.mtu
                  << ", chunk_size=" << config_.chunk_size;
   oob_buffer_.resize(1);
@@ -42,7 +42,8 @@ RDMAReceiver::~RDMAReceiver() {
   }
 }
 
-rdmapp::task<void> RDMAReceiver::receive_data(size_t expected_size) {
+rdmapp::task<void> RDMAReceiver::receive_data(size_t expected_size,
+                                              uint8_t msg_id) {
   expected_size_ = expected_size;
 
   Logger::info() << "Receiver: Waiting for connection...";
@@ -117,7 +118,7 @@ rdmapp::task<void> RDMAReceiver::receive_data(size_t expected_size) {
   frontend_thread_ = std::thread(&RDMAReceiver::frontend_poller, this);
   Logger::info() << "Receiver: Frontend thread started successfully";
 
-  co_await send_cts(expected_size);
+  co_await send_cts(expected_size, msg_id);
 
   {
     std::unique_lock<std::mutex> lock(completion_mutex_);
@@ -293,7 +294,7 @@ void RDMAReceiver::process_completions() {
                  << packet_bitmap_.size()
                  << ", total_packets_=" << total_packets_;
 
-  constexpr size_t batch_size = 32; //TODO controlled by config
+  constexpr size_t batch_size = 32; // TODO controlled by config
   std::vector<struct ibv_wc> wc_vec(batch_size);
   size_t total_polled = 0;
   size_t total_with_imm = 0;
@@ -396,12 +397,12 @@ void RDMAReceiver::process_completions() {
                         << imm << std::dec << ")";
 
         // Verify message ID matches
-        if (msg_id != current_msg_id_ - 1) {
-          Logger::error()
-              << "Receiver: Warning - message ID mismatch: expected "
-              << (current_msg_id_ - 1) << ", got " << msg_id;
-          continue;
-        }
+        // if (msg_id != current_msg_id_ - 1) {
+        //   Logger::error()
+        //       << "Receiver: Warning - message ID mismatch: expected "
+        //       << (current_msg_id_ - 1) << ", got " << msg_id;
+        //   continue;
+        // }
 
         // Verify packet index is valid
         if (packet_idx >= total_packets_) {

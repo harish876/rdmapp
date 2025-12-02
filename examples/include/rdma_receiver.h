@@ -4,6 +4,7 @@
 #include "rdma_util.h"
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -21,7 +22,7 @@ public:
   ~RDMAReceiver();
 
   // Receive data from sender
-  rdmapp::task<void> receive_data(size_t expected_size);
+  rdmapp::task<void> receive_data(size_t expected_size, uint8_t msg_id = 0);
 
   // Get statistics
   size_t get_packets_received() const { return packets_received_; }
