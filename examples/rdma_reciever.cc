@@ -166,20 +166,26 @@ rdmapp::task<void> RDMAReceiver::post_receives(size_t count) {
   oob_buffer_mr_ = std::make_shared<rdmapp::local_mr>(
       pd->reg_mr(oob_buffer_.data(), oob_buffer_.size()));
 
-  // Post initial batch of receives - we post just enough to handle the transfer
-  // QP capacity is 1024, but we need total_packets_ + small buffer for the
-  // transfer Don't overpost (which could cause duplicate completion loop)
-  constexpr size_t max_qp_capacity = 1024;
+  // Post initial batch of receives - we post just enough to handle the transfer.
+  // We use the config_.max_in_flight_requests to control batch size. The
+  // backend thread will post the next batch only after the current batch
+  // completes (in_flight_receives_ reaches zero).
   size_t needed_receives = count;
-  size_t initial_count = std::min(needed_receives, max_qp_capacity);
+  size_t batch_size = config_.max_in_flight_requests > 0
+                          ? config_.max_in_flight_requests
+                          : 1024;
+  size_t initial_count = std::min(needed_receives, batch_size);
 
-  Logger::info() << "Receiver: Posting " << initial_count
+  Logger::info() << "Receiver: Posting initial batch of " << initial_count
                  << " receives (needed: " << needed_receives
-                 << ", QP capacity: " << max_qp_capacity << "...";
+                 << ", batch_size: " << batch_size << ")";
 
   for (size_t i = 0; i < initial_count; ++i) {
     post_single_receive();
   }
+
+  total_posted_receives_.store(initial_count, std::memory_order_release);
+  in_flight_receives_.store(initial_count, std::memory_order_release);
 
   Logger::info() << "Receiver: Posted " << initial_count << " initial receives";
 
@@ -271,7 +277,7 @@ void RDMAReceiver::process_completions() {
   std::vector<struct ibv_wc> wc_vec(batch_size);
   size_t total_polled = 0;
   size_t total_with_imm = 0;
-  size_t receives_to_repost = 0;
+  // receives_to_repost removed - backend now manages batches via in_flight_receives_
 
   // Poll very aggressively - we need to get completions before cq_poller does
   // because cq_poller will consume them from the CQ even if it skips processing
@@ -288,7 +294,7 @@ void RDMAReceiver::process_completions() {
                       << " completions (total polled: " << total_polled;
     }
 
-    receives_to_repost = 0;
+  // reset per-iteration counters handled via in_flight_receives_
 
     for (size_t i = 0; i < num_completions; ++i) {
       const auto &wc = wc_vec[i];
@@ -318,17 +324,23 @@ void RDMAReceiver::process_completions() {
         continue;
       }
 
-      // Always repost receives - the completion consumes the receive work
-      // request Even if it's a duplicate packet, we need to repost to keep the
-      // receive queue full receives_to_repost++;
+  // Each completion consumes one posted receive work request. We decrement
+  // the in-flight counter here. The backend will post a new batch when
+  // the in-flight count reaches zero.
 
       // Check completion status
       if (wc.status != IBV_WC_SUCCESS) {
         Logger::error() << "Receiver: Completion error: status=" << wc.status
                         << ", opcode=" << wc.opcode;
-        // receives_to_repost++; // Need to repost for error completions too
+        // Even on error we consider the WR consumed and decrement in-flight.
+        in_flight_receives_.fetch_sub(1, std::memory_order_acq_rel);
         continue;
       }
+
+      // A successful RECV completion consumes one posted WR. Decrement the
+      // in-flight counter now so that any early 'continue' paths still reflect
+      // the consumed WR.
+      in_flight_receives_.fetch_sub(1, std::memory_order_acq_rel);
 
       // Check if this completion has an immediate value
       if (wc.wc_flags & IBV_WC_WITH_IMM) {
@@ -379,7 +391,6 @@ void RDMAReceiver::process_completions() {
 
         if ((old_val & bit_mask) == 0) {
           packets_received_.fetch_add(1, std::memory_order_relaxed);
-          receives_to_repost++; // Only repost for new packets, not duplicates
           Logger::debug() << "[BACKEND] Marked packet " << packet_idx
                           << " in bitmap[" << bitmap_idx << "] (bitmask=0x"
                           << std::hex << bit_mask << ", old=0x" << old_val
@@ -396,17 +407,26 @@ void RDMAReceiver::process_completions() {
       }
     }
 
-    // Essentially we are only posting 1024 RECVS so this repost loop is very
-    // important Dont know how we can post all recieves all at once. Might be
-    // related in to max in flight?
-    if (receives_to_repost > 0 && oob_buffer_mr_) {
-      for (size_t i = 0; i < receives_to_repost; ++i) {
+    // If the in-flight batch has drained, post the next batch (if any)
+    size_t in_flight_now = in_flight_receives_.load(std::memory_order_acquire);
+    size_t total_posted = total_posted_receives_.load(std::memory_order_acquire);
+    if (in_flight_now == 0 && total_posted < total_packets_) {
+      size_t batch_size_cfg = config_.max_in_flight_requests > 0
+                                  ? config_.max_in_flight_requests
+                                  : 1024;
+      size_t remaining = total_packets_ - total_posted;
+      size_t next_batch = std::min(remaining, batch_size_cfg);
+
+      Logger::info() << "Receiver: Batch drained; posting next batch of "
+                     << next_batch << " receives (remaining=" << remaining
+                     << ")";
+
+      for (size_t i = 0; i < next_batch; ++i) {
         post_single_receive();
       }
-      if (receives_to_repost > 1) {
-        Logger::debug() << "[BACKEND] Reposted " << receives_to_repost
-                        << " receives in batch";
-      }
+
+      total_posted_receives_.fetch_add(next_batch, std::memory_order_acq_rel);
+      in_flight_receives_.store(next_batch, std::memory_order_release);
     }
 
     size_t received_count = packets_received_.load(std::memory_order_acquire);
