@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <future>
 #include <sys/types.h>
 
 namespace RDMA_EC {
@@ -48,14 +49,42 @@ rdmapp::task<void> RDMASender::send_data(const void *data, size_t size, uint8_t 
   Logger::info() << "Sender: Sending " << size << " bytes in " << num_packets
                  << " packets across " << num_chunks << " chunks";
 
+  // Send chunks in batches — create tasks for several chunks and wait for the
+  // batch to complete. This allows multiple outstanding WRs to be posted and
+  // increases throughput compared to awaiting each chunk serially.
+  std::vector<std::future<void>> futs;
+  const size_t chunk_batch = 32; // tune: number of concurrent chunk-tasks
+
   for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
     size_t chunk_start_offset = chunk_idx * config_.chunk_size * config_.mtu;
     size_t packets_in_chunk = std::min(
         config_.chunk_size, num_packets - chunk_idx * config_.chunk_size);
-    Logger::info() << "Sender: Sending chunk " << chunk_idx << " with "
+    Logger::info() << "Sender: Scheduling chunk " << chunk_idx << " with "
                    << packets_in_chunk << " packets";
-    co_await send_chunk(chunk_idx, data_ptr, chunk_start_offset,
-                        packets_in_chunk);
+
+  auto t = send_chunk(chunk_idx, data_ptr, chunk_start_offset,
+            packets_in_chunk);
+  // get the future (by reference), detach the task so it runs concurrently
+  // and move the future into our vector (std::future is move-only)
+  auto &fref = t.get_future();
+  t.detach();
+  futs.emplace_back(std::move(fref));
+
+    if (futs.size() >= chunk_batch) {
+      for (auto &ff : futs) {
+        try {
+          ff.wait();
+        } catch (...) {
+          // propagate after joining
+        }
+      }
+      futs.clear();
+    }
+  }
+
+  // wait remaining
+  for (auto &ff : futs) {
+    ff.wait();
   }
 
   packets_sent_ += num_packets;

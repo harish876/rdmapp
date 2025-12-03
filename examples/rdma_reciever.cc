@@ -62,7 +62,7 @@ rdmapp::task<void> RDMAReceiver::receive_data() {
 
   size_t page_size = sysconf(_SC_PAGESIZE);
   size_t aligned_size =
-      ((config_.buffer_size + page_size - 1) / page_size) * page_size;
+      ((expected_size_ + page_size - 1) / page_size) * page_size;
 
   if (posix_memalign(&recv_buffer_, page_size, aligned_size)) {
     perror("posix_memalign");
