@@ -411,7 +411,7 @@ void RDMAReceiver::process_completions() {
                  << packet_bitmap_.size()
                  << ", total_packets_=" << total_packets_;
 
-  constexpr size_t batch_size = 32; // TODO controlled by config
+  const size_t batch_size = config_.cq_batch_size; // TODO controlled by config
   std::vector<struct ibv_wc> wc_vec(batch_size);
   size_t total_polled = 0;
   size_t total_with_imm = 0;

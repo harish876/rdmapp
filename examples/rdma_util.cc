@@ -69,6 +69,9 @@ bool Config::parse_line(const std::string &line) {
     } else if (key == "num_concurrent_chunks") {
       num_concurrent_chunks = std::stoi(value);
       seen_keys.insert(key);
+    } else if (key == "cq_batch_size") {
+      cq_batch_size = std::stoi(value);
+      seen_keys.insert(key);
     }
 
     else if (key == "receiver_timeout_seconds") {
@@ -278,7 +281,7 @@ std::vector<const char *> SenderConfig::required_role_keys() const {
 
 std::vector<const char *> ReceiverConfig::required_role_keys() const {
   return {"cpu_core_id", "receiver_timeout_seconds", "max_in_flight_requests",
-          "post_per_completion"};
+          "post_per_completion", "cq_batch_size"};
 }
 
 } // namespace RDMA_EC

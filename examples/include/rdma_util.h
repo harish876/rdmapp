@@ -36,6 +36,7 @@ public:
     bool post_per_completion = DEFAULT_POST_PER_COMPLETION; // If true, post a new receive immediately for each consumed WR
     size_t rx_depth = DEFAULT_RX_DEPTH;
     size_t num_concurrent_chunks = 1;
+    size_t cq_batch_size = 32;
     bool enable_batched_sends = false;
 
     // Track which keys were present in the loaded file for validation
