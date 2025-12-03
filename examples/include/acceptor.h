@@ -26,6 +26,10 @@ class acceptor : public noncopyable {
   std::shared_ptr<cq> send_cq_;
   std::shared_ptr<srq> srq_;
   enum ibv_qp_type qp_type_;
+  // Store the user_data from the most recently accepted QP so callers can
+  // inspect it via get_last_user_data(). This is a copy of the QP's
+  // user_data; it is updated on each accept().
+  std::vector<uint8_t> user_data_;
 
 public:
   /**
@@ -101,6 +105,21 @@ public:
    * pointer to the new queue pair. It will be in the RTS state.
    */
   task<std::shared_ptr<qp>> accept();
+  /**
+   * @brief Return a const reference to the user_data buffer received from the
+   * last accepted QP. The buffer will be empty if no accept() has completed
+   * yet or if the peer sent no user_data.
+   */
+  const std::vector<uint8_t> &get_user_data() const;
+  /**
+   * @brief Non-const accessor for the last received user_data buffer.
+   */
+  std::vector<uint8_t> &get_user_data();
+  /**
+   * @brief Parse the last received user_data as (message_id:uint8, expected_size:uint64).
+   * Returns true on success; false if the buffer is too small or malformed.
+   */
+  bool parse_user_data_fields(uint8_t &message_id, size_t &expected_size) const;
   ~acceptor();
 };
 

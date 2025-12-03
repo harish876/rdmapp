@@ -23,6 +23,8 @@ public:
 
   // Receive data from sender
   rdmapp::task<void> receive_data(size_t expected_size, uint8_t msg_id = 0);
+  
+  rdmapp::task<void> receive_data();
 
   // Get statistics
   size_t get_packets_received() const { return packets_received_; }

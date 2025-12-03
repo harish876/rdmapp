@@ -386,7 +386,7 @@ int main(int argc, char *argv[]) {
 
           auto start_time = std::chrono::high_resolution_clock::now();
 
-          co_await receiver.receive_data(buffer_size);
+          co_await receiver.receive_data();
 
           auto end_time = std::chrono::high_resolution_clock::now();
           auto duration_us =

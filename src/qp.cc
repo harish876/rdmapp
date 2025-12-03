@@ -93,6 +93,14 @@ qp::qp(const uint16_t remote_lid, const uint32_t remote_qpn,
 
 std::vector<uint8_t> &qp::user_data() { return user_data_; }
 
+std::string qp::user_data_as_string() const {
+  return std::string(user_data_.begin(), user_data_.end());
+}
+
+void qp::set_user_data_from_string(const std::string &s) {
+  user_data_.assign(s.begin(), s.end());
+}
+
 std::shared_ptr<pd> qp::pd_ptr() const { return pd_; }
 
 std::vector<uint8_t> qp::serialize() const {

@@ -14,7 +14,7 @@ public:
                const Config& config = Config{});
     
     // Send data to connected receiver
-    rdmapp::task<void> send_data(const void* data, size_t size);
+    rdmapp::task<void> send_data(const void* data, size_t size, uint8_t msg_id = 0);
     
     // Get statistics
     size_t get_packets_sent() const { return packets_sent_; }

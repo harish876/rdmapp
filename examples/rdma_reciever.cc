@@ -42,12 +42,129 @@ RDMAReceiver::~RDMAReceiver() {
   }
 }
 
-rdmapp::task<void> RDMAReceiver::receive_data(size_t expected_size,
-                                              uint8_t msg_id) {
-  expected_size_ = expected_size;
-
+rdmapp::task<void> RDMAReceiver::receive_data() {
   Logger::info() << "Receiver: Waiting for connection...";
   qp_ = co_await acceptor_->accept();
+  
+  size_t expected_size;
+  uint8_t msg_id;
+
+  bool parse_ok = acceptor_->parse_user_data_fields(msg_id, expected_size);
+  if (!parse_ok) {
+    throw std::runtime_error("Failed to parse client request");
+  }
+  Logger::error() << "Client Expected Size: " << static_cast<uint64_t>(expected_size);
+  Logger::error() << "Client Message Id: " << static_cast<unsigned>(msg_id);
+
+  expected_size_ = expected_size;
+
+  Logger::info() << "Receiver: Connection accepted";
+
+  size_t page_size = sysconf(_SC_PAGESIZE);
+  size_t aligned_size =
+      ((config_.buffer_size + page_size - 1) / page_size) * page_size;
+
+  if (posix_memalign(&recv_buffer_, page_size, aligned_size)) {
+    perror("posix_memalign");
+    throw std::runtime_error("Failed to allocate page-aligned receive buffer");
+  }
+  recv_buffer_size_ = aligned_size;
+
+  Logger::info() << "Receiver: Allocated page-aligned buffer: size="
+                 << config_.buffer_size << ", aligned_size=" << aligned_size
+                 << ", page_size=" << page_size << ", addr=0x" << std::hex
+                 << reinterpret_cast<uintptr_t>(recv_buffer_) << std::dec;
+
+  auto pd = qp_->pd_ptr();
+  local_mr_ = std::make_shared<rdmapp::local_mr>(
+      pd->reg_mr(recv_buffer_, recv_buffer_size_));
+
+  total_packets_ = calculate_num_packets(expected_size, config_.mtu);
+
+  // Ensure total number of packets doesn't exceed 24-bit limit
+  if (total_packets_ > 0xFFFFFF) {
+    throw std::runtime_error(
+        "Total number of packets exceeds maximum value (2^24 - 1)");
+  }
+
+  total_chunks_ = calculate_num_chunks(total_packets_, config_.chunk_size);
+
+  // Initialize packet bitmap: each element is atomic<uint16_t> representing 16
+  // packets Note: atomic types are not copyable/movable, so we must construct
+  // with the right size from the start. The constructor will default-construct
+  // each element (initialized to 0)
+  size_t bitmap_size = (total_packets_ + 15) / 16; // Round up to nearest 16
+  packet_bitmap_ = std::vector<std::atomic<uint16_t>>(bitmap_size);
+
+  chunk_bitmap_.store(0, std::memory_order_relaxed);
+
+  Logger::info() << "Receiver: Expecting " << total_packets_ << " packets in "
+                 << total_chunks_ << " chunks for " << expected_size
+                 << " bytes";
+
+  co_await post_receives(total_packets_);
+
+  if (!oob_buffer_mr_) {
+    Logger::error()
+        << "Receiver: ERROR - dummy_recv_mr_ not set after post_receives!";
+    throw std::runtime_error("dummy_recv_mr_ not initialized");
+  }
+
+  Logger::info() << "Receiver: Verified dummy_recv_mr_ is set (addr=0x"
+                 << std::hex
+                 << reinterpret_cast<uint64_t>(oob_buffer_mr_->addr())
+                 << std::dec << ", length=" << oob_buffer_mr_->length() << ")";
+
+  Logger::info() << "Receiver: Pre-thread checks - packet_bitmap_.size()="
+                 << packet_bitmap_.size()
+                 << ", total_packets_=" << total_packets_
+                 << ", total_chunks_=" << total_chunks_;
+
+  Logger::info() << "Receiver: Starting backend thread...";
+  completion_thread_ = std::thread(&RDMAReceiver::process_completions, this);
+  Logger::info() << "Receiver: Backend thread started successfully";
+
+  Logger::info() << "Receiver: Starting frontend thread...";
+  frontend_thread_ = std::thread(&RDMAReceiver::frontend_poller, this);
+  Logger::info() << "Receiver: Frontend thread started successfully";
+
+  co_await send_cts(expected_size, msg_id);
+
+  {
+    std::unique_lock<std::mutex> lock(completion_mutex_);
+    auto timeout = std::chrono::seconds(config_.receiver_timeout_seconds);
+    bool success = completion_cv_.wait_for(
+        lock, timeout, [this] { return reception_complete_.load(); });
+
+    if (!success) {
+      Logger::info() << "Receiver: Timeout waiting for packets (timeout: "
+                     << config_.receiver_timeout_seconds << " seconds)";
+    }
+  }
+
+  stop_thread_ = true;
+  if (completion_thread_.joinable()) {
+    completion_thread_.join();
+  }
+  if (frontend_thread_.joinable()) {
+    frontend_thread_.join();
+  }
+
+  bytes_received_ = expected_size;
+
+  Logger::info() << "Receiver: Transfer complete. Received "
+                 << packets_received_.load() << " packets (" << expected_size
+                 << " bytes)";
+
+  co_return;
+}
+
+rdmapp::task<void> RDMAReceiver::receive_data(size_t expected_size, uint8_t msg_id) {  
+  Logger::info() << "Receiver: Waiting for connection...";
+  qp_ = co_await acceptor_->accept();
+  
+  expected_size_ = expected_size;
+
   Logger::info() << "Receiver: Connection accepted";
 
   size_t page_size = sysconf(_SC_PAGESIZE);

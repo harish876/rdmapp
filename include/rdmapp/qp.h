@@ -505,6 +505,18 @@ public:
   std::vector<uint8_t> &user_data();
 
   /**
+   * @brief Convenience: return user_data_ as a std::string
+   *
+   * Useful when the user data contains printable text (JSON, etc.).
+   */
+  std::string user_data_as_string() const;
+
+  /**
+   * @brief Convenience: set user_data_ from a string (copies bytes)
+   */
+  void set_user_data_from_string(const std::string &s);
+
+  /**
    * @brief This function provides access to the Protection Domain of the Queue
    * Pair.
    *
