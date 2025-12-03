@@ -4,9 +4,9 @@
 #include <fstream>
 #include <iostream>
 #include <ostream>
-#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <infiniband/verbs.h>
 
@@ -50,22 +50,30 @@ bool Config::parse_line(const std::string &line) {
     return false;
   }
 
-  // Parse and set values
   try {
     if (key == "mtu") {
       mtu = std::stoull(value);
+      seen_keys.insert(key);
     } else if (key == "chunk_size") {
       chunk_size = std::stoull(value);
+      seen_keys.insert(key);
     } else if (key == "buffer_size") {
       buffer_size = std::stoull(value);
+      seen_keys.insert(key);
     } else if (key == "cpu_core_id") {
       cpu_core_id = std::stoi(value);
-    } else if(key == "rx_depth") {
+      seen_keys.insert(key);
+    } else if (key == "rx_depth") {
       rx_depth = std::stoi(value);
+      seen_keys.insert(key);
+    } else if (key == "num_concurrent_chunks") {
+      num_concurrent_chunks = std::stoi(value);
+      seen_keys.insert(key);
     }
-    
+
     else if (key == "receiver_timeout_seconds") {
       receiver_timeout_seconds = std::stoi(value);
+      seen_keys.insert(key);
     } else if (key == "transport_type") {
       std::transform(value.begin(), value.end(), value.begin(),
                      [](unsigned char c) { return std::tolower(c); });
@@ -77,6 +85,7 @@ bool Config::parse_line(const std::string &line) {
         std::cerr << "[Config] Warning: Unknown transport_type value: " << value
                   << " (expected 'rc' or 'uc'). Using default." << std::endl;
       }
+      seen_keys.insert(key);
     } else if (key == "enable_logging") {
       std::transform(value.begin(), value.end(), value.begin(),
                      [](unsigned char c) { return std::tolower(c); });
@@ -85,6 +94,16 @@ bool Config::parse_line(const std::string &line) {
       } else if (value == "false" || value == "0" || value == "no") {
         enable_logging = false;
       }
+      seen_keys.insert(key);
+    } else if (key == "enable_batched_sends") {
+      std::transform(value.begin(), value.end(), value.begin(),
+                     [](unsigned char c) { return std::tolower(c); });
+      if (value == "true" || value == "1" || value == "yes") {
+        enable_batched_sends = true;
+      } else if (value == "false" || value == "0" || value == "no") {
+        enable_batched_sends = false;
+      }
+      seen_keys.insert(key);
     } else if (key == "logging_level") {
       std::transform(value.begin(), value.end(), value.begin(),
                      [](unsigned char c) { return std::tolower(c); });
@@ -95,8 +114,10 @@ bool Config::parse_line(const std::string &line) {
                   << " (expected debug/info/error). Using existing"
                   << std::endl;
       }
+      seen_keys.insert(key);
     } else if (key == "max_in_flight_requests") {
       max_in_flight_requests = std::stoull(value);
+      seen_keys.insert("max_in_flight_requests");
     } else if (key == "post_per_completion") {
       std::transform(value.begin(), value.end(), value.begin(),
                      [](unsigned char c) { return std::tolower(c); });
@@ -105,6 +126,7 @@ bool Config::parse_line(const std::string &line) {
       } else if (value == "false" || value == "0" || value == "no") {
         post_per_completion = false;
       }
+      seen_keys.insert(key);
     } else {
       std::cerr << "[Config] Unknown Config key: " << key << std::endl;
       return true;
@@ -116,6 +138,30 @@ bool Config::parse_line(const std::string &line) {
   }
 
   return true;
+}
+
+void Config::validate_common() const {
+  // Validate against the common required keys list
+  const auto &keys = required_common_keys();
+  validate_required_keys(keys, "Config");
+}
+
+void SenderConfig::validate() const {
+  validate_common();
+  const auto &keys = required_role_keys();
+  validate_required_keys(keys, "SenderConfig");
+}
+
+void ReceiverConfig::validate() const { validate_common(); }
+
+void Config::validate_required_keys(const std::vector<const char *> &keys,
+                                    const char *ctx) const {
+  for (auto k : keys) {
+    if (seen_keys.find(k) == seen_keys.end()) {
+      throw std::runtime_error(std::string(ctx) + " error: missing '" + k +
+                               "'");
+    }
+  }
 }
 
 bool Config::load_from_file(const std::string &filepath) {
@@ -182,21 +228,57 @@ bool Config::save_to_file(const std::string &filepath) const {
 }
 
 void Config::print() const {
-  std::cout << "[Config] Current configuration:" << std::endl;
   std::cout << "  mtu = " << mtu << std::endl;
   std::cout << "  chunk_size = " << chunk_size << std::endl;
-  std::cout << "  buffer_size = " << buffer_size << std::endl;
-  std::cout << "  cpu_core_id = " << cpu_core_id << std::endl;
   std::cout << "  rx_depth = " << rx_depth << std::endl;
-  std::cout << "  receiver_timeout_seconds = " << receiver_timeout_seconds
-            << std::endl;
+  std::cout << "  transport type = "
+            << ((transport_type == IBV_QPT_RC) ? "rc" : "uc") << std::endl;
   std::cout << "  enable_logging = " << (enable_logging ? "true" : "false")
             << std::endl;
   std::cout << "  logging_level = " << logging_level << std::endl;
+}
+
+void SenderConfig::print() const {
+  std::cout << "[Config] Sender Config: " << std::endl;
+
+  std::cout << "  buffer_size = " << buffer_size << std::endl;
+  Config::print();
+}
+
+void ReceiverConfig::print() const {
+  std::cout << "[Config] Receiver Config: " << std::endl;
+
+  std::cout << "  cpu_core_id = " << cpu_core_id << std::endl;
+  std::cout << "  receiver_timeout_seconds = " << receiver_timeout_seconds
+            << std::endl;
+
   std::cout << "  max_in_flight_requests = " << max_in_flight_requests
             << std::endl;
+
   std::cout << "  post_per_completion = "
             << (post_per_completion ? "true" : "false") << std::endl;
+
+  Config::print();
+}
+
+std::vector<const char *> Config::required_common_keys() const {
+  return {
+      "mtu",
+      "chunk_size",
+      "rx_depth",
+      "transport_type",
+      "enable_logging",
+      "logging_level",
+  };
+}
+
+std::vector<const char *> SenderConfig::required_role_keys() const {
+  return {"buffer_size", "num_concurrent_chunks", "enable_batched_sends"};
+}
+
+std::vector<const char *> ReceiverConfig::required_role_keys() const {
+  return {"cpu_core_id", "receiver_timeout_seconds", "max_in_flight_requests",
+          "post_per_completion"};
 }
 
 } // namespace RDMA_EC

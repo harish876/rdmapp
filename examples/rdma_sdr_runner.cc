@@ -49,8 +49,8 @@ void print_usage(const char *program) {
       << " server --port <port> [--config <path>] [--log-level <level>] "
          "[--iters <count>] [--metrics-out <path>]\n"
       << "  " << program
-      << " client --host <host> --port <port> [--config <path>] [--log-level "
-         "<level>] [--iters <count>] [--metrics-out <path>]\n"
+    << " client --host <host> --port <port> [--config <path>] [--log-level "
+      "<level>] [--iters <count>] [--metrics-out <path>]\n"
       << "\nOptions:\n"
       << "  --config <path>   Path to configuration file (default: "
       << kDefaultConfigPath << ")\n"
@@ -330,7 +330,7 @@ int main(int argc, char *argv[]) {
       const std::string &config_file = *options.config_path;
       if (config.load_from_file(config_file)) {
         Logger::info() << "Loaded configuration from " << config_file;
-        config.print();
+        // config.print();
       } else {
         Logger::info() << "Warning: Failed to load config file, using defaults";
       }
@@ -349,8 +349,10 @@ int main(int argc, char *argv[]) {
     if (options.role == RunnerRole::Server) {
       int port = options.port;
       Logger::info() << "Starting as RECEIVER on port " << port;
-
-      Config receiver_config = config;
+      ReceiverConfig receiver_config;
+      receiver_config = static_cast<ReceiverConfig &>(config);
+      receiver_config.validate();
+      receiver_config.print();
       receiver_config.buffer_size = buffer_size * 2;
 
       auto send_cq = std::make_shared<rdmapp::cq>(device, config.rx_depth);
@@ -461,11 +463,14 @@ int main(int argc, char *argv[]) {
       Logger::info() << "Starting as SENDER connecting to " << receiver_ip
                      << ":" << port;
 
-      Config sender_config = config;
+      SenderConfig sender_config;
+      sender_config = static_cast<SenderConfig &>(config);
+      sender_config.validate();
+      sender_config.print();
       sender_config.buffer_size = buffer_size * 2;
 
-      auto send_cq = std::make_shared<rdmapp::cq>(device, config.rx_depth);
-      auto recv_cq = std::make_shared<rdmapp::cq>(device, config.rx_depth);
+      auto send_cq = std::make_shared<rdmapp::cq>(device, sender_config.rx_depth);
+      auto recv_cq = std::make_shared<rdmapp::cq>(device, sender_config.rx_depth);
 
       auto send_cq_poller = std::make_shared<rdmapp::cq_poller>(send_cq);
       auto recv_cq_poller = std::make_shared<rdmapp::cq_poller>(recv_cq);

@@ -54,7 +54,8 @@ rdmapp::task<void> RDMASender::send_data(const void *data, size_t size,
   // batch to complete. This allows multiple outstanding WRs to be posted and
   // increases throughput compared to awaiting each chunk serially.
   std::vector<std::future<void>> futs;
-  const size_t chunk_batch = 32; // tune: number of concurrent chunk-tasks
+  const size_t chunk_batch =
+      config_.num_concurrent_chunks; // tune: number of concurrent chunk-tasks
 
   for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
     size_t chunk_start_offset = chunk_idx * config_.chunk_size * config_.mtu;
@@ -63,7 +64,10 @@ rdmapp::task<void> RDMASender::send_data(const void *data, size_t size,
     Logger::info() << "Sender: Scheduling chunk " << chunk_idx << " with "
                    << packets_in_chunk << " packets";
 
-    auto t = send_chunk_batch(chunk_idx, data_ptr, chunk_start_offset,
+    auto t = config_.enable_batched_sends
+                 ? send_chunk_batch(chunk_idx, data_ptr, chunk_start_offset,
+                                    packets_in_chunk)
+                 : send_chunk(chunk_idx, data_ptr, chunk_start_offset,
                               packets_in_chunk);
 
     auto &fref = t.get_future();
