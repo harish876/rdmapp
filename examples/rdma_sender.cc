@@ -3,8 +3,8 @@
 #include "rdma_logger.h"
 #include <cstdint>
 #include <cstring>
-#include <iostream>
 #include <future>
+#include <iostream>
 #include <sys/types.h>
 
 namespace RDMA_EC {
@@ -18,7 +18,8 @@ RDMASender::RDMASender(std::shared_ptr<rdmapp::connector> connector,
                  << ", chunk_size=" << config_.chunk_size;
 }
 
-rdmapp::task<void> RDMASender::send_data(const void *data, size_t size, uint8_t msg_id) {
+rdmapp::task<void> RDMASender::send_data(const void *data, size_t size,
+                                         uint8_t msg_id) {
   Logger::info() << "Sender: Connecting...";
   connector_->set_user_data_fields(msg_id, size);
   qp_ = co_await connector_->connect();
@@ -62,27 +63,24 @@ rdmapp::task<void> RDMASender::send_data(const void *data, size_t size, uint8_t 
     Logger::info() << "Sender: Scheduling chunk " << chunk_idx << " with "
                    << packets_in_chunk << " packets";
 
-  auto t = send_chunk(chunk_idx, data_ptr, chunk_start_offset,
-            packets_in_chunk);
-  // get the future (by reference), detach the task so it runs concurrently
-  // and move the future into our vector (std::future is move-only)
-  auto &fref = t.get_future();
-  t.detach();
-  futs.emplace_back(std::move(fref));
+    auto t = send_chunk_batch(chunk_idx, data_ptr, chunk_start_offset,
+                              packets_in_chunk);
+
+    auto &fref = t.get_future();
+    t.detach();
+    futs.emplace_back(std::move(fref));
 
     if (futs.size() >= chunk_batch) {
       for (auto &ff : futs) {
         try {
           ff.wait();
         } catch (...) {
-          // propagate after joining
         }
       }
       futs.clear();
     }
   }
 
-  // wait remaining
   for (auto &ff : futs) {
     ff.wait();
   }
@@ -117,6 +115,62 @@ rdmapp::task<void> RDMASender::send_chunk(size_t chunk_idx, const uint8_t *data,
 
     co_await send_packet(global_packet_idx, data, offset, packet_size);
   }
+
+  co_return;
+}
+
+rdmapp::task<void> RDMASender::send_chunk_batch(size_t chunk_idx,
+                                                const uint8_t *data,
+                                                size_t /* chunk_start_offset */,
+                                                size_t packets_in_chunk) {
+  if (!qp_ || !local_mr_) {
+    throw std::runtime_error(
+        "send_chunk_batch: QP or local MR not initialized");
+  }
+
+  std::vector<ibv_sge> sges(packets_in_chunk);
+  std::vector<ibv_send_wr> wrs(packets_in_chunk);
+
+  for (size_t pkt_idx = 0; pkt_idx < packets_in_chunk; ++pkt_idx) {
+    size_t global_packet_idx = chunk_idx * config_.chunk_size + pkt_idx;
+    size_t offset = global_packet_idx * config_.mtu;
+    size_t packet_size = std::min(config_.mtu, cts_info_.buffer_size - offset);
+
+    rdmapp::remote_mr remote_mr(
+        reinterpret_cast<void *>(
+            reinterpret_cast<uintptr_t>(cts_info_.remote_addr) + offset),
+        static_cast<uint32_t>(packet_size), cts_info_.rkey);
+
+    sges[pkt_idx] = {};
+    sges[pkt_idx].addr =
+        reinterpret_cast<uint64_t>(const_cast<uint8_t *>(data + offset));
+    sges[pkt_idx].length = static_cast<uint32_t>(packet_size);
+    sges[pkt_idx].lkey = local_mr_->lkey();
+
+    auto &wr = wrs[pkt_idx];
+    std::memset(&wr, 0, sizeof(wr));
+    wr.opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
+    wr.next = nullptr; // set below when linking
+    wr.num_sge = 1;
+    wr.sg_list = &sges[pkt_idx];
+
+    uint32_t imm = encode_immediate(current_msg_id_.load(),
+                                    static_cast<uint32_t>(global_packet_idx));
+    wr.imm_data = imm;
+    wr.wr.rdma.remote_addr = reinterpret_cast<uint64_t>(remote_mr.addr());
+    wr.wr.rdma.rkey = remote_mr.rkey();
+
+    wr.send_flags = 0;
+  }
+
+  for (size_t i = 0; i + 1 < packets_in_chunk; ++i) {
+    wrs[i].next = &wrs[i + 1];
+  }
+
+  struct ibv_send_wr *head = &wrs[0];
+  struct ibv_send_wr *tail = &wrs[packets_in_chunk - 1];
+
+  co_await qp_->post_batch_and_await(*head, *tail);
 
   co_return;
 }

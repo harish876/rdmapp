@@ -307,6 +307,55 @@ void qp::post_send(struct ibv_send_wr const &send_wr,
            "failed to post send");
 }
 
+rdmapp::task<void> qp::post_batch_and_await(struct ibv_send_wr &head,
+                                            struct ibv_send_wr &tail) {
+  struct batch_awaitable {
+    qp *qpp;
+    struct ibv_send_wr *head;
+    struct ibv_send_wr *tail;
+    executor::callback_ptr cb{nullptr};
+    struct ibv_wc wc{};
+    bool await_ready() const noexcept { return false; }
+    bool await_suspend(std::coroutine_handle<> h) noexcept {
+      // Create the callback that will resume this coroutine
+      cb = executor::make_callback([this, h](const struct ibv_wc &w) {
+        wc = w;
+        h.resume();
+      });
+      // Signal tail and attach callback
+      tail->send_flags |= IBV_SEND_SIGNALED;
+      tail->wr_id = reinterpret_cast<uint64_t>(cb);
+
+      struct ibv_send_wr *bad = nullptr;
+      try {
+        check_rc(::ibv_post_send(qpp->qp_, head, &bad), "failed to post batch send");
+      } catch (...) {
+        executor::destroy_callback(cb);
+        throw;
+      }
+      return true;
+    }
+    void await_resume() {
+      check_wc_status(wc.status, "failed to send batch");
+      // The executor worker destroys the callback after invocation.
+    }
+  };
+
+  co_await batch_awaitable{this, &head, &tail};
+  co_return;
+}
+
+rdmapp::task<void> qp::post_batch_and_await(std::vector<struct ibv_send_wr> &wrs) {
+  if (wrs.empty()) co_return;
+  for (size_t i = 0; i + 1 < wrs.size(); ++i) {
+    wrs[i].next = &wrs[i + 1];
+  }
+  auto &head = wrs.front();
+  auto &tail = wrs.back();
+  co_await post_batch_and_await(head, tail);
+  co_return;
+}
+
 void qp::post_recv(struct ibv_recv_wr const &recv_wr,
                    struct ibv_recv_wr *&bad_recv_wr) const {
   (this->*(post_recv_fn))(recv_wr, bad_recv_wr);

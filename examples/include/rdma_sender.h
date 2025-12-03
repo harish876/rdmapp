@@ -29,6 +29,12 @@ private:
                                    const uint8_t* data,
                                    size_t chunk_start_offset,
                                    size_t packets_in_chunk);
+
+    // Batched send: link all packet WRs in a chunk and post once
+    rdmapp::task<void> send_chunk_batch(size_t chunk_idx,
+                                        const uint8_t* data,
+                                        size_t chunk_start_offset,
+                                        size_t packets_in_chunk);
     
     // Send a single packet
     rdmapp::task<void> send_packet(size_t packet_idx,

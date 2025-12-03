@@ -13,6 +13,7 @@
 #include <infiniband/mlx5dv.h>
 
 #include "rdmapp/cq.h"
+#include "rdmapp/task.h"
 #include "rdmapp/device.h"
 #include "rdmapp/pd.h"
 #include "rdmapp/srq.h"
@@ -293,6 +294,21 @@ public:
    */
   void post_send(struct ibv_send_wr const &send_wr,
                  struct ibv_send_wr *&bad_send_wr);
+
+  // Post a linked list of send WRs starting at head and await the completion
+  // of the tail WR (which must be signaled).
+  // Pre-conditions:
+  //  - head->next chain is valid and ends at tail
+  //  - tail->send_flags has IBV_SEND_SIGNALED set
+  // Behavior:
+  //  - Sets tail->wr_id to an executor callback that resumes the awaiting coroutine
+  //  - Calls ibv_post_send(qp_, head, &bad)
+  //  - Awaits tail completion and throws on non-success status
+  rdmapp::task<void> post_batch_and_await(struct ibv_send_wr &head,
+                                          struct ibv_send_wr &tail);
+
+  // Convenience overload: accept a vector of WRs, link them, and await tail
+  rdmapp::task<void> post_batch_and_await(std::vector<struct ibv_send_wr> &wrs);
 
   /**
    * @brief This function is used to post a recv work request to the Queue Pair.
