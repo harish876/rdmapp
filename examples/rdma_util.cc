@@ -98,6 +98,15 @@ bool Config::parse_line(const std::string &line) {
         enable_logging = false;
       }
       seen_keys.insert(key);
+    } else if (key == "enable_inline_sends") {
+      std::transform(value.begin(), value.end(), value.begin(),
+                     [](unsigned char c) { return std::tolower(c); });
+      if (value == "true" || value == "1" || value == "yes") {
+        enable_inline_sends = true;
+      } else if (value == "false" || value == "0" || value == "no") {
+        enable_inline_sends = false;
+      }
+      seen_keys.insert(key);
     } else if (key == "enable_batched_sends") {
       std::transform(value.begin(), value.end(), value.begin(),
                      [](unsigned char c) { return std::tolower(c); });
@@ -105,6 +114,15 @@ bool Config::parse_line(const std::string &line) {
         enable_batched_sends = true;
       } else if (value == "false" || value == "0" || value == "no") {
         enable_batched_sends = false;
+      }
+      seen_keys.insert(key);
+    } else if (key == "enable_batched_recvs") {
+      std::transform(value.begin(), value.end(), value.begin(),
+                     [](unsigned char c) { return std::tolower(c); });
+      if (value == "true" || value == "1" || value == "yes") {
+        enable_batch_recvs = true;
+      } else if (value == "false" || value == "0" || value == "no") {
+        enable_batch_recvs = false;
       }
       seen_keys.insert(key);
     } else if (key == "logging_level") {
@@ -239,12 +257,15 @@ void Config::print() const {
   std::cout << "  enable_logging = " << (enable_logging ? "true" : "false")
             << std::endl;
   std::cout << "  logging_level = " << logging_level << std::endl;
+  std::cout << "  enable_batched_recvs = "
+            << (enable_batch_recvs ? "true" : "false") << std::endl;
 }
 
 void SenderConfig::print() const {
   std::cout << "[Config] Sender Config: " << std::endl;
 
   std::cout << "  buffer_size = " << buffer_size << std::endl;
+  std::cout << "  enable_inline_sends = " << enable_inline_sends << std::endl;
   Config::print();
 }
 
@@ -276,12 +297,17 @@ std::vector<const char *> Config::required_common_keys() const {
 }
 
 std::vector<const char *> SenderConfig::required_role_keys() const {
-  return {"buffer_size", "num_concurrent_chunks", "enable_batched_sends"};
+  return {"buffer_size", "num_concurrent_chunks", "enable_batched_sends",
+          "enable_inline_sends"};
 }
 
 std::vector<const char *> ReceiverConfig::required_role_keys() const {
-  return {"cpu_core_id", "receiver_timeout_seconds", "max_in_flight_requests",
-          "post_per_completion", "cq_batch_size"};
+  return {"cpu_core_id",
+          "receiver_timeout_seconds",
+          "max_in_flight_requests",
+          "post_per_completion",
+          "cq_batch_size",
+          "enable_batched_recvs"};
 }
 
 } // namespace RDMA_EC

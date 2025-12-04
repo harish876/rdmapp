@@ -30,6 +30,8 @@ rdmapp::task<void> RDMASender::send_data(const void *data, size_t size,
                  << cts_info_.remote_addr << ", rkey=0x" << cts_info_.rkey
                  << std::dec << ", packets=" << cts_info_.total_packets;
 
+    // Enable inline sends on QP if configured
+    qp_->set_inline_sends_enabled(config_.enable_inline_sends);
   auto pd = qp_->pd_ptr();
   local_mr_ = std::make_shared<rdmapp::local_mr>(
       pd->reg_mr(const_cast<void *>(data), size));

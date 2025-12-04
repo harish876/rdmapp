@@ -38,6 +38,8 @@ public:
     size_t num_concurrent_chunks = 1;
     size_t cq_batch_size = 32;
     bool enable_batched_sends = false;
+    bool enable_batch_recvs = false; // when true, use batched recv posting and await tail
+    bool enable_inline_sends = false;
 
     // Track which keys were present in the loaded file for validation
     std::unordered_set<std::string> seen_keys;

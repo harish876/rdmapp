@@ -45,7 +45,7 @@ RDMAReceiver::~RDMAReceiver() {
 rdmapp::task<void> RDMAReceiver::receive_data() {
   Logger::info() << "Receiver: Waiting for connection...";
   qp_ = co_await acceptor_->accept();
-  
+
   size_t expected_size;
   uint8_t msg_id;
 
@@ -53,7 +53,8 @@ rdmapp::task<void> RDMAReceiver::receive_data() {
   if (!parse_ok) {
     throw std::runtime_error("Failed to parse client request");
   }
-  Logger::error() << "Client Expected Size: " << static_cast<uint64_t>(expected_size);
+  Logger::error() << "Client Expected Size: "
+                  << static_cast<uint64_t>(expected_size);
   Logger::error() << "Client Message Id: " << static_cast<unsigned>(msg_id);
 
   expected_size_ = expected_size;
@@ -159,10 +160,11 @@ rdmapp::task<void> RDMAReceiver::receive_data() {
   co_return;
 }
 
-rdmapp::task<void> RDMAReceiver::receive_data(size_t expected_size, uint8_t msg_id) {  
+rdmapp::task<void> RDMAReceiver::receive_data(size_t expected_size,
+                                              uint8_t msg_id) {
   Logger::info() << "Receiver: Waiting for connection...";
   qp_ = co_await acceptor_->accept();
-  
+
   expected_size_ = expected_size;
 
   Logger::info() << "Receiver: Connection accepted";
@@ -318,8 +320,32 @@ rdmapp::task<void> RDMAReceiver::post_receives(size_t count) {
                  << " receives (needed: " << needed_receives
                  << ", batch_size: " << batch_size << ")";
 
-  for (size_t i = 0; i < initial_count; ++i) {
-    post_single_receive();
+  if (config_.enable_batch_recvs) {
+    std::vector<struct ibv_recv_wr> wrs(initial_count);
+    std::vector<struct ibv_sge> sges(initial_count);
+
+    for (size_t i = 0; i < initial_count; ++i) {
+      auto &sge = sges[i];
+      sge.addr = reinterpret_cast<uint64_t>(oob_buffer_mr_->addr());
+      sge.length = oob_buffer_mr_->length();
+      sge.lkey = oob_buffer_mr_->lkey();
+
+      auto &wr = wrs[i];
+      std::memset(&wr, 0, sizeof(wr));
+      wr.num_sge = 1;
+      wr.sg_list = &sge;
+      // Use marker for non-tail WRs so backend can identify RECV completions
+      // Tail will get a callback wr_id injected by qp helper
+      wr.wr_id = 0xFFFFFFFFFFFFFFFFULL;
+    }
+
+    Logger::info() << "Receiver: Posting " << initial_count
+                   << " recvs via batched API (no await)";
+    qp_->post_recv_batch_and_await(wrs);
+  } else {
+    for (size_t i = 0; i < initial_count; ++i) {
+      post_single_receive();
+    }
   }
 
   total_posted_receives_.store(initial_count, std::memory_order_release);
@@ -411,7 +437,7 @@ void RDMAReceiver::process_completions() {
                  << packet_bitmap_.size()
                  << ", total_packets_=" << total_packets_;
 
-  const size_t batch_size = config_.cq_batch_size; 
+  const size_t batch_size = config_.cq_batch_size;
   std::vector<struct ibv_wc> wc_vec(batch_size);
   size_t total_polled = 0;
   size_t total_with_imm = 0;

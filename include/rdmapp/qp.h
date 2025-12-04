@@ -93,6 +93,8 @@ class qp : public noncopyable, public std::enable_shared_from_this<qp> {
   void destroy();
 
 public:
+  // Toggle inline sends for eligible WRs (size <= max_inline_data)
+  void set_inline_sends_enabled(bool enabled) { inline_sends_enabled_ = enabled; }
   class send_awaitable {
     std::shared_ptr<qp> qp_;
     std::shared_ptr<local_mr> local_mr_;
@@ -310,6 +312,12 @@ public:
   // Convenience overload: accept a vector of WRs, link them, and await tail
   rdmapp::task<void> post_batch_and_await(std::vector<struct ibv_send_wr> &wrs);
 
+  // Batched recv posting and await tail completion. All WRs are posted; the
+  // tail gets a callback wr_id to resume the awaiting coroutine when the last
+  // completion arrives.
+  rdmapp::task<void> post_recv_batch_and_await(struct ibv_recv_wr &head,
+                                               struct ibv_recv_wr &tail);
+  rdmapp::task<void> post_recv_batch_and_await(std::vector<struct ibv_recv_wr> &wrs);
   /**
    * @brief This function is used to post a recv work request to the Queue Pair.
    * It will be posted to either RQ or SRQ depending on whether or not SRQ is
@@ -576,6 +584,8 @@ private:
    */
   void post_recv_srq(struct ibv_recv_wr const &recv_wr,
                      struct ibv_recv_wr *&bad_recv_wr) const;
+  // When enabled, small sends will use IBV_SEND_INLINE
+  bool inline_sends_enabled_{false};
 };
 
 } // namespace rdmapp
