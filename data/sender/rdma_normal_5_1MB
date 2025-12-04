@@ -1,0 +1,7 @@
+=== SENDER AVERAGES OVER 5 ITERATIONS ===
+Average packets: 1024
+Average bytes: 1.04858e+06
+Average duration: 166.904 ms
+Average throughput: 5.99148 MB/s (50.2601 Mbit/sec)
+[INFO] Appended 5 metrics entries to /users/harish01/harish_work/SDR_RDMA_UDP/external/rdmapp/data/sender/rdma_normal_5_1MB.csv
+[DEBUG] [src/device.cc:188] closed device gid=00:00:00:00:00:00:00:00:00:00:ff:ff:80:6e:db:a7 lid=0

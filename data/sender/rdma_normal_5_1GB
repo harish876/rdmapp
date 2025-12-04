@@ -1,0 +1,45 @@
+harish01@node1:~/harish_work/SDR_RDMA_UDP/external/rdmapp$ ./build/rdma_sdr_runner client --host 130.127.134.60 --config ./examples/client.config --iters 5 --metrics-out /users/harish01/harish_work/SDR_RDMA_UDP/external/rdmapp/data/sender/rdma_normal_5_1GB.csv
+mlx5dv is supported
+[DEBUG] [src/device.cc:109] opened Infiniband device gid=00:00:00:00:00:00:00:00:00:00:ff:ff:80:6e:db:a7 lid=0 link_layer=ethernet
+[Config] Loaded configuration from ./examples/client.config
+[INFO] Loaded configuration from ./examples/client.config
+[Config] Sender Config: 
+  buffer_size = 1073741824
+  mtu = 1024
+  chunk_size = 16
+  rx_depth = 8192
+  transport type = uc
+  enable_logging = false
+  logging_level = debug
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 1) ===
+Sent 1048576 packets, 1073741824 bytes
+Transfer time: 45008 ms (45.008 seconds)
+Throughput: 22.7515 MB/s (190.854 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 2) ===
+Sent 1048576 packets, 1073741824 bytes
+Transfer time: 45063.5 ms (45.0635 seconds)
+Throughput: 22.7235 MB/s (190.618 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 3) ===
+Sent 1048576 packets, 1073741824 bytes
+Transfer time: 44657.6 ms (44.6576 seconds)
+Throughput: 22.93 MB/s (192.351 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 4) ===
+Sent 1048576 packets, 1073741824 bytes
+Transfer time: 58413.9 ms (58.4139 seconds)
+Throughput: 17.5301 MB/s (147.053 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 5) ===
+Sent 1048576 packets, 1073741824 bytes
+Transfer time: 44633.9 ms (44.6339 seconds)
+Throughput: 22.9422 MB/s (192.453 Mbit/sec)
+
+=== SENDER AVERAGES OVER 5 ITERATIONS ===
+Average packets: 1.04858e+06
+Average bytes: 1.07374e+09
+Average duration: 47555.4 ms
+Average throughput: 21.5328 MB/s (180.63 Mbit/sec)
+[DEBUG] [src/device.cc:188] closed device gid=00:00:00:00:00:00:00:00:00:00:ff:ff:80:6e:db:a7 lid=0

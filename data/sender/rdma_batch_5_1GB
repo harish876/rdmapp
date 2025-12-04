@@ -1,0 +1,45 @@
+harish01@node1:~/harish_work/SDR_RDMA_UDP/external/rdmapp$ ./build/rdma_sdr_runner client --host 130.127.134.60 --config ./examples/client.config --iters 5
+mlx5dv is supported
+[DEBUG] [src/device.cc:109] opened Infiniband device gid=00:00:00:00:00:00:00:00:00:00:ff:ff:80:6e:db:a7 lid=0 link_layer=ethernet
+[Config] Loaded configuration from ./examples/client.config
+[INFO] Loaded configuration from ./examples/client.config
+[Config] Sender Config: 
+  buffer_size = 1073741824
+  mtu = 1024
+  chunk_size = 16
+  rx_depth = 8192
+  transport type = uc
+  enable_logging = false
+  logging_level = debug
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 1) ===
+Sent 1048576 packets, 1073741824 bytes
+Transfer time: 1639.92 ms (1.63992 seconds)
+Throughput: 624.42 MB/s (5238.01 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 2) ===
+Sent 1048576 packets, 1073741824 bytes
+Transfer time: 1436.91 ms (1.43691 seconds)
+Throughput: 712.641 MB/s (5978.06 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 3) ===
+Sent 1048576 packets, 1073741824 bytes
+Transfer time: 59674 ms (59.674 seconds)
+Throughput: 17.1599 MB/s (143.948 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 4) ===
+Sent 1048576 packets, 1073741824 bytes
+Transfer time: 59421.6 ms (59.4216 seconds)
+Throughput: 17.2328 MB/s (144.559 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 5) ===
+Sent 1048576 packets, 1073741824 bytes
+Transfer time: 59542.7 ms (59.5427 seconds)
+Throughput: 17.1977 MB/s (144.265 Mbit/sec)
+
+=== SENDER AVERAGES OVER 5 ITERATIONS ===
+Average packets: 1.04858e+06
+Average bytes: 1.07374e+09
+Average duration: 36343 ms
+Average throughput: 28.176 MB/s (236.357 Mbit/sec)
+[DEBUG] [src/device.cc:188] closed device gid=00:00:00:00:00:00:00:00:00:00:ff:ff:80:6e:db:a7 lid=0
