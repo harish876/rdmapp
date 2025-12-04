@@ -130,6 +130,7 @@ void qp::create(enum ibv_qp_type qp_type) {
   qp_init_attr.cap.max_send_sge = 1;
   qp_init_attr.cap.max_recv_wr = 2048; // If set to 32768 then segfaults
   qp_init_attr.cap.max_send_wr = 2048; // If set to 32768 then segfaults
+  qp_init_attr.cap.max_inline_data = 256; //Only when IBV_SEND_INLINE enabled
   qp_init_attr.sq_sig_all = 0;
   qp_init_attr.qp_context = this;
 
