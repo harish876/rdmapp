@@ -15,7 +15,7 @@ namespace RDMA_EC {
 
 class RDMASender {
 public:
-    // Data connector is typically UC, control connector can be RC for ACKs.
+    // Data connector is typically UC, control connector is UC for ACKs.
     RDMASender(std::shared_ptr<rdmapp::connector> data_connector,
                std::shared_ptr<rdmapp::connector> ctrl_connector,
                const Config& config = Config{});
@@ -46,7 +46,7 @@ private:
     // Receive ACKs on the control QP (selective repeat).
     rdmapp::task<void> receive_acks(size_t num_chunks);
     
-    // Separate connectors for data (UC) and control (RC) paths.
+    // Separate connectors for data (UC) and control (UC) paths.
     std::shared_ptr<rdmapp::connector> data_connector_;
     std::shared_ptr<rdmapp::connector> ctrl_connector_;
     std::shared_ptr<rdmapp::qp> qp_;
@@ -65,8 +65,8 @@ private:
     // Local memory region
     std::shared_ptr<rdmapp::local_mr> local_mr_;
 
-    // --- Selective repeat (optional) ---
-    // Control QP used for ACKs (created only if enable_selective_repeat is true).
+    // --- Selective repeat (always enabled) ---
+    // Control QP used for ACKs (required).
     std::shared_ptr<rdmapp::qp> ctrl_qp_;
 
     // Retransmission queue for selective repeat
@@ -76,6 +76,9 @@ private:
   // - ack_thread_: waits for ACKs on control QP and removes chunks from retransmit queue
   std::thread ack_thread_;
   bool ack_thread_started_{false};
+
+  // Highest chunk index already ACKed (for cumulative ACK handling)
+  std::atomic<size_t> highest_chunk_acked_{0};
 };
 
 } // namespace RDMA_EC

@@ -25,16 +25,14 @@ rdmapp::task<void> RDMASender::send_data(const void* data, size_t size) {
     qp_ = co_await data_connector_->connect();
     Logger::info() << "Sender: Connected (data QP)";
 
-    // If selective repeat is enabled, create a separate control QP for ACKs.
-    if (config_.enable_selective_repeat) {
-        if (!ctrl_connector_) {
-            throw std::runtime_error(
-                "Sender: enable_selective_repeat is true but ctrl_connector_ is null");
-        }
-        Logger::info() << "Sender: Connecting control QP (RC) for selective repeat...";
-        ctrl_qp_ = co_await ctrl_connector_->connect();
-        Logger::info() << "Sender: Control QP connected";
+    // Create a separate control QP for ACKs (selective repeat is always enabled).
+    if (!ctrl_connector_) {
+        throw std::runtime_error(
+            "Sender: ctrl_connector_ is null (required for selective repeat)");
     }
+    Logger::info() << "Sender: Connecting control QP (UC) for selective repeat...";
+    ctrl_qp_ = co_await ctrl_connector_->connect();
+    Logger::info() << "Sender: Control QP connected";
     
     co_await wait_for_cts();
     Logger::info() << "Sender: Received CTS - remote_addr=0x" << std::hex 
@@ -55,28 +53,30 @@ rdmapp::task<void> RDMASender::send_data(const void* data, size_t size) {
     
     size_t num_chunks = calculate_num_chunks(num_packets, config_.chunk_size);
     
-    // Initialize selective repeat state and start SR background thread if enabled
-    if (config_.enable_selective_repeat && ctrl_qp_) {
-        // Create retransmit queue with num_chunks size (timestamps initialized to 0)
-        retransmit_queue_ = std::make_unique<RetransmitQueue>(num_chunks);
-
-        // Start background ACK receiver thread that will run concurrently with
-        // the sending loop and remove chunks from retransmit queue when ACKed.
-        ack_thread_started_ = true;
-        ack_thread_ = std::thread([this, num_chunks]() {
-            try {
-                auto task = receive_acks(num_chunks);
-                auto &fut = task.get_future();
-                // Do NOT detach the task here; we block on its future so that
-                // the coroutine frame stays alive until completion.
-                fut.get();
-            } catch (const std::exception &e) {
-                Logger::error() << "Sender: ACK thread exception: " << e.what();
-            } catch (...) {
-                Logger::error() << "Sender: ACK thread unknown exception";
-            }
-        });
+    // Initialize selective repeat state and start SR background thread
+    if (!ctrl_qp_) {
+        throw std::runtime_error("Sender: ctrl_qp_ is null (required for selective repeat)");
     }
+    
+    // Create retransmit queue with num_chunks size (timestamps initialized to 0)
+    retransmit_queue_ = std::make_unique<RetransmitQueue>(num_chunks);
+
+    // Start background ACK receiver thread that will run concurrently with
+    // the sending loop and remove chunks from retransmit queue when ACKed.
+    ack_thread_started_ = true;
+    ack_thread_ = std::thread([this, num_chunks]() {
+        try {
+            auto task = receive_acks(num_chunks);
+            auto &fut = task.get_future();
+            // Do NOT detach the task here; we block on its future so that
+            // the coroutine frame stays alive until completion.
+            fut.get();
+        } catch (const std::exception &e) {
+            Logger::error() << "Sender: ACK thread exception: " << e.what();
+        } catch (...) {
+            Logger::error() << "Sender: ACK thread unknown exception";
+        }
+    });
     
     // Note: current_msg_id_ is set from CTS message, not incremented here
     
@@ -87,7 +87,7 @@ rdmapp::task<void> RDMASender::send_data(const void* data, size_t size) {
     using clock = std::chrono::high_resolution_clock;
     const auto rto = std::chrono::milliseconds(config_.sr_rto_ms);
 
-    if (config_.enable_selective_repeat && retransmit_queue_) {
+    if (retransmit_queue_) {
         // First pass: send all chunks once and set timestamps
         for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
             size_t chunk_start_offset = chunk_idx * config_.chunk_size * config_.mtu;
@@ -139,17 +139,6 @@ rdmapp::task<void> RDMASender::send_data(const void* data, size_t size) {
         if (ack_thread_started_ && ack_thread_.joinable()) {
             ack_thread_.join();
         }
-    } else {
-        // Non-SR mode: just send all chunks once
-        for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
-            size_t chunk_start_offset = chunk_idx * config_.chunk_size * config_.mtu;
-            size_t packets_in_chunk = std::min(config_.chunk_size,
-                                              num_packets - chunk_idx * config_.chunk_size);
-            Logger::info() << "Sender: Sending chunk " << chunk_idx << " with " << packets_in_chunk << " packets";
-
-            co_await send_chunk(chunk_idx, data_ptr, chunk_start_offset, packets_in_chunk);
-        }
-    }
 
     packets_sent_ += num_packets;
     bytes_sent_ += size;
@@ -184,13 +173,30 @@ rdmapp::task<void> RDMASender::receive_acks(size_t num_chunks) {
             continue;
         }
 
-        // Remove the ACKed chunk from retransmit queue
+        // Handle cumulative ACK: remove all chunks from prev_highest to ack.chunk_idx
         if (retransmit_queue_ && ack.chunk_idx < num_chunks) {
-            if (retransmit_queue_->remove(static_cast<uint32_t>(ack.chunk_idx))) {
-                ++acked_chunks;
-                Logger::debug() << "Sender: ACK received for chunk "
-                                << ack.chunk_idx << " (" << acked_chunks
-                                << "/" << num_chunks << ")";
+            size_t prev_highest = highest_chunk_acked_.load(std::memory_order_acquire);
+            size_t new_highest = ack.chunk_idx + 1; // Cumulative ACK means chunks 0..ack.chunk_idx are ACKed
+            
+            if (new_highest > prev_highest) {
+                // Remove all chunks from prev_highest to new_highest-1
+                for (size_t chunk_idx = prev_highest; chunk_idx < new_highest; ++chunk_idx) {
+                    if (retransmit_queue_->remove(static_cast<uint32_t>(chunk_idx))) {
+                        ++acked_chunks;
+                        Logger::debug() << "Sender: Cumulative ACK removed chunk "
+                                        << chunk_idx << " (" << acked_chunks
+                                        << "/" << num_chunks << ")";
+                    }
+                }
+                
+                // Update highest chunk ACKed
+                highest_chunk_acked_.store(new_highest, std::memory_order_release);
+                Logger::info() << "Sender: Cumulative ACK received for chunks 0-"
+                               << ack.chunk_idx << " (total ACKed: " << acked_chunks
+                               << "/" << num_chunks << ")";
+            } else {
+                Logger::debug() << "Sender: Duplicate or out-of-order cumulative ACK for chunk "
+                                << ack.chunk_idx << " (already ACKed up to " << prev_highest << ")";
             }
         } else {
             Logger::error()
@@ -214,8 +220,8 @@ rdmapp::task<void> RDMASender::send_chunk(size_t chunk_idx,
 
         // For testing selective repeat, we can intentionally drop individual
         // packets with a configurable probability. This is only enabled when
-        // selective repeat is on and packet_loss_probability > 0.
-        if (config_.enable_selective_repeat && config_.packet_loss_probability > 0.0) {
+        // packet_loss_probability > 0.
+        if (config_.packet_loss_probability > 0.0) {
             static thread_local std::mt19937 rng(std::random_device{}());
             std::uniform_real_distribution<double> dist(0.0, 1.0);
             if (dist(rng) < config_.packet_loss_probability) {

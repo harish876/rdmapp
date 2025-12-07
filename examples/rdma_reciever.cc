@@ -49,16 +49,14 @@ rdmapp::task<void> RDMAReceiver::receive_data(size_t expected_size) {
   qp_ = co_await data_acceptor_->accept();
   Logger::info() << "Receiver: Connection accepted (data QP)";
 
-  // If selective repeat is enabled, accept a second QP for control/ACKs.
-  if (config_.enable_selective_repeat) {
-    if (!ctrl_acceptor_) {
-      throw std::runtime_error(
-          "Receiver: enable_selective_repeat is true but ctrl_acceptor_ is null");
-    }
-    Logger::info() << "Receiver: Waiting for control QP (RC) connection...";
-    ctrl_qp_ = co_await ctrl_acceptor_->accept();
-    Logger::info() << "Receiver: Control QP connection accepted";
+  // Accept control QP for ACKs (selective repeat is always enabled).
+  if (!ctrl_acceptor_) {
+    throw std::runtime_error(
+        "Receiver: ctrl_acceptor_ is null (required for selective repeat)");
   }
+  Logger::info() << "Receiver: Waiting for control QP (UC) connection...";
+  ctrl_qp_ = co_await ctrl_acceptor_->accept();
+  Logger::info() << "Receiver: Control QP connection accepted";
 
   size_t page_size = sysconf(_SC_PAGESIZE);
   size_t aligned_size =
@@ -100,10 +98,8 @@ rdmapp::task<void> RDMAReceiver::receive_data(size_t expected_size) {
   size_t chunk_bitmap_size = (total_chunks_ + 7) / 8; // Round up to nearest 8
   chunk_bitmap_ = std::vector<std::atomic<uint8_t>>(chunk_bitmap_size);
 
-  // Initialize selective repeat ACK tracking if enabled
-  if (config_.enable_selective_repeat) {
-    chunk_acked_.assign(total_chunks_, false);
-  }
+  // Initialize selective repeat ACK tracking
+  chunk_acked_.assign(total_chunks_, false);
 
   Logger::info() << "Receiver: Expecting " << total_packets_ << " packets in "
                  << total_chunks_ << " chunks for " << expected_size
@@ -450,10 +446,8 @@ void RDMAReceiver::process_completions() {
 
     size_t received_count = packets_received_.load(std::memory_order_acquire);
     if (received_count >= total_packets_) {
-      // In selective-repeat mode, don't declare completion until all chunks
-      // have been ACKed (or at least we've run the ACK coroutine for them).
-      if (!config_.enable_selective_repeat ||
-          chunks_acked_.load(std::memory_order_acquire) >= total_chunks_) {
+      // Don't declare completion until all chunks have been ACKed.
+      if (chunks_acked_.load(std::memory_order_acquire) >= total_chunks_) {
         Logger::info()
             << "Receiver: All " << total_packets_ << " packets received! ("
             << received_count << " unique, " << total_with_imm
@@ -514,53 +508,55 @@ void RDMAReceiver::frontend_poller() {
       continue;
     }
 
-    // Backend marks chunk completion in chunk_bitmap_.
-    // Frontend scans for newly completed chunks and sends ACKs (possibly
-    // re-sending if an ACK was lost on UC).
-    for (size_t chunk_idx = 0; chunk_idx < total_chunks_; ++chunk_idx) {
-      if (chunk_idx >= chunk_acked_.size())
-        break;
-
-      // Check if chunk is complete (bit is set in chunk_bitmap_).
-      // Re-send ACKs periodically for all complete chunks to handle UC loss.
+    // Calculate cumulative ACK: find the highest chunk index where all
+    // previous chunks (0 to that index) are complete.
+    size_t cumulative_ack = highest_cumulative_ack_sent_.load(std::memory_order_acquire);
+    
+    // Check chunks starting from the last cumulative ACK sent
+    for (size_t chunk_idx = cumulative_ack; chunk_idx < total_chunks_; ++chunk_idx) {
       size_t bitmap_idx_chunk = chunk_idx / 8;
       size_t bit_pos = chunk_idx % 8;
       uint8_t chunk_bit = 1U << bit_pos;
       
+      // Check if this chunk is complete
       if (bitmap_idx_chunk < chunk_bitmap_.size() &&
-          (chunk_bitmap_[bitmap_idx_chunk].load(std::memory_order_acquire) &
-           chunk_bit)) {
-        // Chunk is complete. Send (or re-send) ACK periodically. ACKs are
-        // idempotent, so re-sending is safe and necessary on UC where ACKs can
-        // be lost. Only increment chunks_acked_ counter on first send.
-        if (config_.enable_selective_repeat && ctrl_qp_) {
-          bool is_first_ack = !chunk_acked_[chunk_idx];
-          
-          rdmapp::task<void> ack_task =
-              [this, chunk_idx, is_first_ack]() -> rdmapp::task<void> {
-            ChunkAck ack;
-            ack.msg_id = current_msg_id_ - 1;
-            ack.chunk_idx = static_cast<uint32_t>(chunk_idx);
-            co_await ctrl_qp_->send(&ack, sizeof(ack));
-            Logger::info()
-                << "Receiver: ACK sent (frontend) for chunk " << chunk_idx
-                << " (msg_id=" << static_cast<int>(ack.msg_id) << ")";
-            if (is_first_ack) {
-              chunk_acked_[chunk_idx] = true;
-              chunks_acked_.fetch_add(1, std::memory_order_release);
-            }
-            co_return;
-          }();
+          (chunk_bitmap_[bitmap_idx_chunk].load(std::memory_order_acquire) & chunk_bit)) {
+        // This chunk is complete, so we can extend the cumulative ACK
+        cumulative_ack = chunk_idx + 1;
+      } else {
+        // This chunk is not complete, so we can't extend further
+        break;
+      }
+    }
 
-          try {
-            auto &fut = ack_task.get_future();
-            fut.get(); // block frontend thread until ACK send completes
-          } catch (const std::exception &e) {
-            Logger::error()
-                << "Receiver: Error in frontend ACK send for chunk "
-                << chunk_idx << ": " << e.what();
-          }
-        }
+    // Send cumulative ACK if we have a new one to send
+    if (cumulative_ack > highest_cumulative_ack_sent_.load(std::memory_order_acquire) && ctrl_qp_) {
+      size_t ack_to_send = cumulative_ack - 1; // Send the highest complete chunk index
+      
+      rdmapp::task<void> ack_task =
+          [this, ack_to_send]() -> rdmapp::task<void> {
+        ChunkAck ack;
+        ack.msg_id = current_msg_id_ - 1;
+        ack.chunk_idx = static_cast<uint32_t>(ack_to_send);
+        co_await ctrl_qp_->send(&ack, sizeof(ack));
+        Logger::info()
+            << "Receiver: Cumulative ACK sent (frontend) for chunk " << ack_to_send
+            << " (msg_id=" << static_cast<int>(ack.msg_id) << ")";
+        co_return;
+      }();
+
+      try {
+        auto &fut = ack_task.get_future();
+        fut.get(); // block frontend thread until ACK send completes
+        
+        // Update the highest cumulative ACK sent and chunks_acked_ counter
+        size_t prev_highest = highest_cumulative_ack_sent_.load(std::memory_order_acquire);
+        size_t new_chunks_acked = cumulative_ack - prev_highest;
+        highest_cumulative_ack_sent_.store(cumulative_ack, std::memory_order_release);
+        chunks_acked_.fetch_add(new_chunks_acked, std::memory_order_release);
+      } catch (const std::exception &e) {
+        Logger::error()
+            << "Receiver: Error in frontend cumulative ACK send: " << e.what();
       }
     }
 
@@ -568,8 +564,8 @@ void RDMAReceiver::frontend_poller() {
       break;
     }
 
-    // Small sleep to avoid busy-waiting.
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    // Sleep for 10ms before next poll
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 }
 

@@ -17,7 +17,7 @@ namespace RDMA_EC {
 
 class RDMAReceiver {
 public:
-  // data_acceptor is typically UC; ctrl_acceptor can be RC for ACKs.
+  // data_acceptor is typically UC; ctrl_acceptor is UC for ACKs.
   RDMAReceiver(std::shared_ptr<rdmapp::acceptor> data_acceptor,
                std::shared_ptr<rdmapp::acceptor> ctrl_acceptor,
                std::shared_ptr<rdmapp::cq> recv_cq,
@@ -53,11 +53,11 @@ private:
   // Send ACKs for completed chunks over the control QP (selective repeat).
   rdmapp::task<void> send_acks();
 
-  // Separate acceptors for data (UC) and control (RC) paths.
+  // Separate acceptors for data (UC) and control (UC) paths.
   std::shared_ptr<rdmapp::acceptor> data_acceptor_;
   std::shared_ptr<rdmapp::acceptor> ctrl_acceptor_;
   std::shared_ptr<rdmapp::qp> qp_;
-  std::shared_ptr<rdmapp::qp> ctrl_qp_;  // optional control QP for ACKs
+  std::shared_ptr<rdmapp::qp> ctrl_qp_;  // control QP for ACKs (required)
   std::shared_ptr<rdmapp::cq> recv_cq_;
   Config config_;
 
@@ -82,6 +82,9 @@ private:
 
   // Number of chunks for which we've successfully sent an ACK.
   std::atomic<size_t> chunks_acked_{0};
+
+  // Highest cumulative ACK sent (highest chunk index where all previous chunks are complete)
+  std::atomic<size_t> highest_cumulative_ack_sent_{0};
 
   // Background threads for processing
   std::thread completion_thread_;
