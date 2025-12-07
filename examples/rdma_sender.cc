@@ -139,6 +139,7 @@ rdmapp::task<void> RDMASender::send_data(const void* data, size_t size) {
         if (ack_thread_started_ && ack_thread_.joinable()) {
             ack_thread_.join();
         }
+    }
 
     packets_sent_ += num_packets;
     bytes_sent_ += size;
