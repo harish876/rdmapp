@@ -168,7 +168,7 @@ def main():
     # 1) SNDR throughput vs loss
     plot_throughput_vs_loss(
         sndr_series,
-        title="Sender Throughput vs Loss",
+        title="RDMA SR - Sender Throughput vs Loss",
         ylabel="Sender Throughput (Mbps)",
         filename="sndr_throughput_vs_loss.png",
     )
@@ -176,7 +176,7 @@ def main():
     # 2) RCVR throughput vs loss
     plot_throughput_vs_loss(
         rcvr_series,
-        title="Receiver Throughput vs Loss",
+        title="RDMA SR - Receiver Throughput vs Loss",
         ylabel="Receiver Throughput (Mbps)",
         filename="rcvr_throughput_vs_loss.png",
     )

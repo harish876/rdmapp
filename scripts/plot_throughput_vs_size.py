@@ -253,7 +253,7 @@ def main():
     plot_throughput_vs_size(
         sndr_series,
         sndr_size_labels,
-        title="Sender Throughput vs Message Size",
+        title="RDMA SR - Sender Throughput vs Message Size",
         ylabel="Sender Throughput (Mbps)",
         filename="sndr_throughput_vs_size.png",
     )
@@ -262,7 +262,7 @@ def main():
     plot_throughput_vs_size(
         rcvr_series,
         rcvr_size_labels,
-        title="Receiver Throughput vs Message Size",
+        title="RDMA SR - Receiver Throughput vs Message Size",
         ylabel="Receiver Throughput (Mbps)",
         filename="rcvr_throughput_vs_size.png",
     )
