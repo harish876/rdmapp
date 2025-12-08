@@ -6,6 +6,10 @@
 #include <random>
 #include <future>
 #include <thread>
+#include <pthread.h>
+#include <sched.h>
+#include <iomanip>
+#include <ctime>
 
 namespace RDMA_EC {
 
@@ -65,6 +69,20 @@ rdmapp::task<void> RDMASender::send_data(const void* data, size_t size) {
     // the sending loop and remove chunks from retransmit queue when ACKed.
     ack_thread_started_ = true;
     ack_thread_ = std::thread([this, num_chunks]() {
+        // Pin thread to a specific CPU core if configured
+        if (config_.cpu_core_id >= 0) {
+            cpu_set_t cpuset;
+            CPU_ZERO(&cpuset);
+            CPU_SET(3, &cpuset);  // Use CPU 3 for ACK thread (receiver uses 1 and 2)
+            int ret = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+            if (ret != 0) {
+                Logger::error() << "Sender: Warning - failed to set CPU affinity for "
+                                   "ACK thread: " << ret;
+            } else {
+                Logger::info() << "Sender: Pinned ACK thread to CPU " << sched_getcpu();
+            }
+        }
+        
         try {
             auto task = receive_acks(num_chunks);
             auto &fut = task.get_future();
@@ -174,6 +192,12 @@ rdmapp::task<void> RDMASender::receive_acks(size_t num_chunks) {
             continue;
         }
 
+        // Get current time for logging
+        auto now = std::chrono::system_clock::now();
+        auto time_t = std::chrono::system_clock::to_time_t(now);
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()) % 1000;
+
         // Handle cumulative ACK: remove all chunks from prev_highest to ack.chunk_idx
         if (retransmit_queue_ && ack.chunk_idx < num_chunks) {
             size_t prev_highest = highest_chunk_acked_.load(std::memory_order_acquire);
@@ -192,9 +216,13 @@ rdmapp::task<void> RDMASender::receive_acks(size_t num_chunks) {
                 
                 // Update highest chunk ACKed
                 highest_chunk_acked_.store(new_highest, std::memory_order_release);
-                Logger::info() << "Sender: Cumulative ACK received for chunks 0-"
-                               << ack.chunk_idx << " (total ACKed: " << acked_chunks
-                               << "/" << num_chunks << ")";
+                
+                // Print timestamp and highest ACK number
+                std::tm* tm_info = std::localtime(&time_t);
+                char time_str[32];
+                std::strftime(time_str, sizeof(time_str), "%H:%M:%S", tm_info);
+                Logger::info() << "[" << time_str << "." << std::setfill('0') << std::setw(3) << ms.count()
+                               << "] Recv: highest ACK=" << ack.chunk_idx;
             } else {
                 Logger::debug() << "Sender: Duplicate or out-of-order cumulative ACK for chunk "
                                 << ack.chunk_idx << " (already ACKed up to " << prev_highest << ")";
