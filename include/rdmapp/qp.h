@@ -13,6 +13,7 @@
 #include <infiniband/mlx5dv.h>
 
 #include "rdmapp/cq.h"
+#include "rdmapp/task.h"
 #include "rdmapp/device.h"
 #include "rdmapp/pd.h"
 #include "rdmapp/srq.h"
@@ -92,6 +93,8 @@ class qp : public noncopyable, public std::enable_shared_from_this<qp> {
   void destroy();
 
 public:
+  // Toggle inline sends for eligible WRs (size <= max_inline_data)
+  void set_inline_sends_enabled(bool enabled) { inline_sends_enabled_ = enabled; }
   class send_awaitable {
     std::shared_ptr<qp> qp_;
     std::shared_ptr<local_mr> local_mr_;
@@ -294,6 +297,27 @@ public:
   void post_send(struct ibv_send_wr const &send_wr,
                  struct ibv_send_wr *&bad_send_wr);
 
+  // Post a linked list of send WRs starting at head and await the completion
+  // of the tail WR (which must be signaled).
+  // Pre-conditions:
+  //  - head->next chain is valid and ends at tail
+  //  - tail->send_flags has IBV_SEND_SIGNALED set
+  // Behavior:
+  //  - Sets tail->wr_id to an executor callback that resumes the awaiting coroutine
+  //  - Calls ibv_post_send(qp_, head, &bad)
+  //  - Awaits tail completion and throws on non-success status
+  rdmapp::task<void> post_batch_and_await(struct ibv_send_wr &head,
+                                          struct ibv_send_wr &tail);
+
+  // Convenience overload: accept a vector of WRs, link them, and await tail
+  rdmapp::task<void> post_batch_and_await(std::vector<struct ibv_send_wr> &wrs);
+
+  // Batched recv posting and await tail completion. All WRs are posted; the
+  // tail gets a callback wr_id to resume the awaiting coroutine when the last
+  // completion arrives.
+  rdmapp::task<void> post_recv_batch_and_await(struct ibv_recv_wr &head,
+                                               struct ibv_recv_wr &tail);
+  rdmapp::task<void> post_recv_batch_and_await(std::vector<struct ibv_recv_wr> &wrs);
   /**
    * @brief This function is used to post a recv work request to the Queue Pair.
    * It will be posted to either RQ or SRQ depending on whether or not SRQ is
@@ -505,6 +529,18 @@ public:
   std::vector<uint8_t> &user_data();
 
   /**
+   * @brief Convenience: return user_data_ as a std::string
+   *
+   * Useful when the user data contains printable text (JSON, etc.).
+   */
+  std::string user_data_as_string() const;
+
+  /**
+   * @brief Convenience: set user_data_ from a string (copies bytes)
+   */
+  void set_user_data_from_string(const std::string &s);
+
+  /**
    * @brief This function provides access to the Protection Domain of the Queue
    * Pair.
    *
@@ -548,6 +584,8 @@ private:
    */
   void post_recv_srq(struct ibv_recv_wr const &recv_wr,
                      struct ibv_recv_wr *&bad_recv_wr) const;
+  // When enabled, small sends will use IBV_SEND_INLINE
+  bool inline_sends_enabled_{false};
 };
 
 } // namespace rdmapp

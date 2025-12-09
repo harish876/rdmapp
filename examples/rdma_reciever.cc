@@ -1,6 +1,9 @@
 #include "rdma_logger.h"
 #include "rdma_receiver.h"
+#include "rdma_util.h"
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -17,6 +20,7 @@ RDMAReceiver::RDMAReceiver(std::shared_ptr<rdmapp::acceptor> acceptor,
                            const Config &config)
     : acceptor_(acceptor), recv_cq_(recv_cq), config_(config) {
   Logger::set_enabled(config_.enable_logging);
+  Logger::set_level(Logger::level_from_string(config_.logging_level));
   Logger::info() << "Receiver: Initialized with MTU=" << config_.mtu
                  << ", chunk_size=" << config_.chunk_size;
   oob_buffer_.resize(1);
@@ -38,11 +42,131 @@ RDMAReceiver::~RDMAReceiver() {
   }
 }
 
-rdmapp::task<void> RDMAReceiver::receive_data(size_t expected_size) {
-  expected_size_ = expected_size;
-
+rdmapp::task<void> RDMAReceiver::receive_data() {
   Logger::info() << "Receiver: Waiting for connection...";
   qp_ = co_await acceptor_->accept();
+
+  size_t expected_size;
+  uint8_t msg_id;
+
+  bool parse_ok = acceptor_->parse_user_data_fields(msg_id, expected_size);
+  if (!parse_ok) {
+    throw std::runtime_error("Failed to parse client request");
+  }
+  Logger::error() << "Client Expected Size: "
+                  << static_cast<uint64_t>(expected_size);
+  Logger::error() << "Client Message Id: " << static_cast<unsigned>(msg_id);
+
+  expected_size_ = expected_size;
+
+  Logger::info() << "Receiver: Connection accepted";
+
+  size_t page_size = sysconf(_SC_PAGESIZE);
+  size_t aligned_size =
+      ((expected_size_ + page_size - 1) / page_size) * page_size;
+
+  if (posix_memalign(&recv_buffer_, page_size, aligned_size)) {
+    perror("posix_memalign");
+    throw std::runtime_error("Failed to allocate page-aligned receive buffer");
+  }
+  recv_buffer_size_ = aligned_size;
+
+  Logger::info() << "Receiver: Allocated page-aligned buffer: size="
+                 << config_.buffer_size << ", aligned_size=" << aligned_size
+                 << ", page_size=" << page_size << ", addr=0x" << std::hex
+                 << reinterpret_cast<uintptr_t>(recv_buffer_) << std::dec;
+
+  auto pd = qp_->pd_ptr();
+  local_mr_ = std::make_shared<rdmapp::local_mr>(
+      pd->reg_mr(recv_buffer_, recv_buffer_size_));
+
+  total_packets_ = calculate_num_packets(expected_size, config_.mtu);
+
+  // Ensure total number of packets doesn't exceed 24-bit limit
+  if (total_packets_ > 0xFFFFFF) {
+    throw std::runtime_error(
+        "Total number of packets exceeds maximum value (2^24 - 1)");
+  }
+
+  total_chunks_ = calculate_num_chunks(total_packets_, config_.chunk_size);
+
+  // Initialize packet bitmap: each element is atomic<uint16_t> representing 16
+  // packets Note: atomic types are not copyable/movable, so we must construct
+  // with the right size from the start. The constructor will default-construct
+  // each element (initialized to 0)
+  size_t bitmap_size = (total_packets_ + 15) / 16; // Round up to nearest 16
+  packet_bitmap_ = std::vector<std::atomic<uint16_t>>(bitmap_size);
+
+  chunk_bitmap_.store(0, std::memory_order_relaxed);
+
+  Logger::info() << "Receiver: Expecting " << total_packets_ << " packets in "
+                 << total_chunks_ << " chunks for " << expected_size
+                 << " bytes";
+
+  co_await post_receives(total_packets_);
+
+  if (!oob_buffer_mr_) {
+    Logger::error()
+        << "Receiver: ERROR - dummy_recv_mr_ not set after post_receives!";
+    throw std::runtime_error("dummy_recv_mr_ not initialized");
+  }
+
+  Logger::info() << "Receiver: Verified dummy_recv_mr_ is set (addr=0x"
+                 << std::hex
+                 << reinterpret_cast<uint64_t>(oob_buffer_mr_->addr())
+                 << std::dec << ", length=" << oob_buffer_mr_->length() << ")";
+
+  Logger::info() << "Receiver: Pre-thread checks - packet_bitmap_.size()="
+                 << packet_bitmap_.size()
+                 << ", total_packets_=" << total_packets_
+                 << ", total_chunks_=" << total_chunks_;
+
+  Logger::info() << "Receiver: Starting backend thread...";
+  completion_thread_ = std::thread(&RDMAReceiver::process_completions, this);
+  Logger::info() << "Receiver: Backend thread started successfully";
+
+  Logger::info() << "Receiver: Starting frontend thread...";
+  frontend_thread_ = std::thread(&RDMAReceiver::frontend_poller, this);
+  Logger::info() << "Receiver: Frontend thread started successfully";
+
+  co_await send_cts(expected_size, msg_id);
+
+  {
+    std::unique_lock<std::mutex> lock(completion_mutex_);
+    auto timeout = std::chrono::seconds(config_.receiver_timeout_seconds);
+    bool success = completion_cv_.wait_for(
+        lock, timeout, [this] { return reception_complete_.load(); });
+
+    if (!success) {
+      Logger::info() << "Receiver: Timeout waiting for packets (timeout: "
+                     << config_.receiver_timeout_seconds << " seconds)";
+    }
+  }
+
+  stop_thread_ = true;
+  if (completion_thread_.joinable()) {
+    completion_thread_.join();
+  }
+  if (frontend_thread_.joinable()) {
+    frontend_thread_.join();
+  }
+
+  bytes_received_ = expected_size;
+
+  Logger::info() << "Receiver: Transfer complete. Received "
+                 << packets_received_.load() << " packets (" << expected_size
+                 << " bytes)";
+
+  co_return;
+}
+
+rdmapp::task<void> RDMAReceiver::receive_data(size_t expected_size,
+                                              uint8_t msg_id) {
+  Logger::info() << "Receiver: Waiting for connection...";
+  qp_ = co_await acceptor_->accept();
+
+  expected_size_ = expected_size;
+
   Logger::info() << "Receiver: Connection accepted";
 
   size_t page_size = sysconf(_SC_PAGESIZE);
@@ -98,8 +222,7 @@ rdmapp::task<void> RDMAReceiver::receive_data(size_t expected_size) {
   Logger::info() << "Receiver: Verified dummy_recv_mr_ is set (addr=0x"
                  << std::hex
                  << reinterpret_cast<uint64_t>(oob_buffer_mr_->addr())
-                 << std::dec << ", length=" << oob_buffer_mr_->length() <<
-                 ")";
+                 << std::dec << ", length=" << oob_buffer_mr_->length() << ")";
 
   Logger::info() << "Receiver: Pre-thread checks - packet_bitmap_.size()="
                  << packet_bitmap_.size()
@@ -114,7 +237,7 @@ rdmapp::task<void> RDMAReceiver::receive_data(size_t expected_size) {
   frontend_thread_ = std::thread(&RDMAReceiver::frontend_poller, this);
   Logger::info() << "Receiver: Frontend thread started successfully";
 
-  co_await send_cts(expected_size);
+  co_await send_cts(expected_size, msg_id);
 
   {
     std::unique_lock<std::mutex> lock(completion_mutex_);
@@ -149,9 +272,26 @@ rdmapp::task<void> RDMAReceiver::send_cts(size_t buffer_size) {
   CTSInfo cts;
   cts.remote_addr = reinterpret_cast<uint64_t>(recv_buffer_);
   cts.rkey = local_mr_->rkey();
-  cts.buffer_size = buffer_size;
   cts.total_packets = total_packets_;
+  cts.buffer_size = buffer_size;
   cts.msg_id = current_msg_id_++;
+
+  co_await qp_->send(&cts, sizeof(cts));
+
+  Logger::info() << "Receiver: Sent CTS - addr=0x" << std::hex
+                 << cts.remote_addr << ", rkey=0x" << cts.rkey << std::dec;
+
+  co_return;
+}
+
+rdmapp::task<void> RDMAReceiver::send_cts(size_t buffer_size, uint8_t msg_id) {
+  CTSInfo cts;
+  cts.remote_addr = reinterpret_cast<uint64_t>(recv_buffer_);
+  cts.rkey = local_mr_->rkey();
+  cts.total_packets = total_packets_;
+
+  cts.buffer_size = buffer_size;
+  cts.msg_id = msg_id;
 
   co_await qp_->send(&cts, sizeof(cts));
 
@@ -166,20 +306,50 @@ rdmapp::task<void> RDMAReceiver::post_receives(size_t count) {
   oob_buffer_mr_ = std::make_shared<rdmapp::local_mr>(
       pd->reg_mr(oob_buffer_.data(), oob_buffer_.size()));
 
-  // Post initial batch of receives - we post just enough to handle the transfer
-  // QP capacity is 1024, but we need total_packets_ + small buffer for the
-  // transfer Don't overpost (which could cause duplicate completion loop)
-  constexpr size_t max_qp_capacity = 1024;
+  // Post initial batch of receives - we post just enough to handle the
+  // transfer. We use the config_.max_in_flight_requests to control batch size.
+  // The backend thread will post the next batch only after the current batch
+  // completes (in_flight_receives_ reaches zero).
   size_t needed_receives = count;
-  size_t initial_count = std::min(needed_receives, max_qp_capacity);
+  size_t batch_size = config_.max_in_flight_requests > 0
+                          ? config_.max_in_flight_requests
+                          : 1024;
+  size_t initial_count = std::min(needed_receives, batch_size);
 
-  Logger::info() << "Receiver: Posting " << initial_count
+  Logger::info() << "Receiver: Posting initial batch of " << initial_count
                  << " receives (needed: " << needed_receives
-                 << ", QP capacity: " << max_qp_capacity << "...";
+                 << ", batch_size: " << batch_size << ")";
 
-  for (size_t i = 0; i < initial_count; ++i) {
-    post_single_receive();
+  if (config_.enable_batch_recvs) {
+    std::vector<struct ibv_recv_wr> wrs(initial_count);
+    std::vector<struct ibv_sge> sges(initial_count);
+
+    for (size_t i = 0; i < initial_count; ++i) {
+      auto &sge = sges[i];
+      sge.addr = reinterpret_cast<uint64_t>(oob_buffer_mr_->addr());
+      sge.length = oob_buffer_mr_->length();
+      sge.lkey = oob_buffer_mr_->lkey();
+
+      auto &wr = wrs[i];
+      std::memset(&wr, 0, sizeof(wr));
+      wr.num_sge = 1;
+      wr.sg_list = &sge;
+      // Use marker for non-tail WRs so backend can identify RECV completions
+      // Tail will get a callback wr_id injected by qp helper
+      wr.wr_id = 0xFFFFFFFFFFFFFFFFULL;
+    }
+
+    Logger::info() << "Receiver: Posting " << initial_count
+                   << " recvs via batched API (no await)";
+    qp_->post_recv_batch_and_await(wrs);
+  } else {
+    for (size_t i = 0; i < initial_count; ++i) {
+      post_single_receive();
+    }
   }
+
+  total_posted_receives_.store(initial_count, std::memory_order_release);
+  in_flight_receives_.store(initial_count, std::memory_order_release);
 
   Logger::info() << "Receiver: Posted " << initial_count << " initial receives";
 
@@ -267,11 +437,12 @@ void RDMAReceiver::process_completions() {
                  << packet_bitmap_.size()
                  << ", total_packets_=" << total_packets_;
 
-  constexpr size_t batch_size = 32;
+  const size_t batch_size = config_.cq_batch_size;
   std::vector<struct ibv_wc> wc_vec(batch_size);
   size_t total_polled = 0;
   size_t total_with_imm = 0;
-  size_t receives_to_repost = 0;
+  // receives_to_repost removed - backend now manages batches via
+  // in_flight_receives_
 
   // Poll very aggressively - we need to get completions before cq_poller does
   // because cq_poller will consume them from the CQ even if it skips processing
@@ -288,7 +459,7 @@ void RDMAReceiver::process_completions() {
                       << " completions (total polled: " << total_polled;
     }
 
-    receives_to_repost = 0;
+    // reset per-iteration counters handled via in_flight_receives_
 
     for (size_t i = 0; i < num_completions; ++i) {
       const auto &wc = wc_vec[i];
@@ -318,16 +489,43 @@ void RDMAReceiver::process_completions() {
         continue;
       }
 
-      // Always repost receives - the completion consumes the receive work
-      // request Even if it's a duplicate packet, we need to repost to keep the
-      // receive queue full receives_to_repost++;
+      // Each completion consumes one posted receive work request. We decrement
+      // the in-flight counter here. The backend will post a new batch when
+      // the in-flight count reaches zero.
 
       // Check completion status
       if (wc.status != IBV_WC_SUCCESS) {
         Logger::error() << "Receiver: Completion error: status=" << wc.status
                         << ", opcode=" << wc.opcode;
-        // receives_to_repost++; // Need to repost for error completions too
+        // Even on error we consider the WR consumed and decrement in-flight.
+        in_flight_receives_.fetch_sub(1, std::memory_order_acq_rel);
+        // If configured, immediately repost a receive to keep the queue full
+        if (config_.post_per_completion) {
+          size_t total_posted =
+              total_posted_receives_.load(std::memory_order_acquire);
+          if (total_posted < total_packets_) {
+            post_single_receive();
+            total_posted_receives_.fetch_add(1, std::memory_order_acq_rel);
+            in_flight_receives_.fetch_add(1, std::memory_order_acq_rel);
+          }
+        }
         continue;
+      }
+
+      // A successful RECV completion consumes one posted WR. Decrement the
+      // in-flight counter now so that any early 'continue' paths still reflect
+      // the consumed WR.
+      in_flight_receives_.fetch_sub(1, std::memory_order_acq_rel);
+
+      // If configured, immediately repost a receive to keep the queue full
+      if (config_.post_per_completion) {
+        size_t total_posted =
+            total_posted_receives_.load(std::memory_order_acquire);
+        if (total_posted < total_packets_) {
+          post_single_receive();
+          total_posted_receives_.fetch_add(1, std::memory_order_acq_rel);
+          in_flight_receives_.fetch_add(1, std::memory_order_acq_rel);
+        }
       }
 
       // Check if this completion has an immediate value
@@ -342,12 +540,12 @@ void RDMAReceiver::process_completions() {
                         << imm << std::dec << ")";
 
         // Verify message ID matches
-        if (msg_id != current_msg_id_ - 1) {
-          Logger::error()
-              << "Receiver: Warning - message ID mismatch: expected "
-              << (current_msg_id_ - 1) << ", got " << msg_id;
-          continue;
-        }
+        // if (msg_id != current_msg_id_ - 1) {
+        //   Logger::error()
+        //       << "Receiver: Warning - message ID mismatch: expected "
+        //       << (current_msg_id_ - 1) << ", got " << msg_id;
+        //   continue;
+        // }
 
         // Verify packet index is valid
         if (packet_idx >= total_packets_) {
@@ -379,7 +577,6 @@ void RDMAReceiver::process_completions() {
 
         if ((old_val & bit_mask) == 0) {
           packets_received_.fetch_add(1, std::memory_order_relaxed);
-          receives_to_repost++; // Only repost for new packets, not duplicates
           Logger::debug() << "[BACKEND] Marked packet " << packet_idx
                           << " in bitmap[" << bitmap_idx << "] (bitmask=0x"
                           << std::hex << bit_mask << ", old=0x" << old_val
@@ -396,16 +593,46 @@ void RDMAReceiver::process_completions() {
       }
     }
 
-    // Essentially we are only posting 1024 RECVS so this repost loop is very
-    // important Dont know how we can post all recieves all at once. Might be
-    // related in to max in flight?
-    if (receives_to_repost > 0 && oob_buffer_mr_) {
-      for (size_t i = 0; i < receives_to_repost; ++i) {
-        post_single_receive();
-      }
-      if (receives_to_repost > 1) {
-        Logger::debug() << "[BACKEND] Reposted " << receives_to_repost
-                        << " receives in batch";
+    // Sliding-window refill: if the number of in-flight receives drops below
+    // a low watermark (e.g. 1/4 of batch), post additional receives to bring
+    // the window back up to batch_size. This avoids the gap when waiting for
+    // a whole batch to drain. Disabled when post_per_completion is enabled.
+    if (!config_.post_per_completion) {
+      size_t in_flight_now =
+          in_flight_receives_.load(std::memory_order_acquire);
+      size_t total_posted =
+          total_posted_receives_.load(std::memory_order_acquire);
+      if (total_posted < total_packets_) {
+        size_t batch_size_cfg = config_.max_in_flight_requests > 0
+                                    ? config_.max_in_flight_requests
+                                    : 1024;
+
+        size_t low_watermark = std::max((size_t)1, batch_size_cfg / 4);
+
+        if (in_flight_now <= low_watermark) {
+          // target in-flight after refill is min(batch_size_cfg,
+          // remaining+in_flight_now)
+          size_t remaining = total_packets_ - total_posted;
+          size_t target = std::min(batch_size_cfg, in_flight_now + remaining);
+          size_t to_post =
+              (target > in_flight_now) ? (target - in_flight_now) : 0;
+
+          if (to_post > 0) {
+            Logger::debug()
+                << "Receiver: Low in-flight (" << in_flight_now << "), posting "
+                << to_post
+                << " receives to refill window (batch_size=" << batch_size_cfg
+                << ", remaining=" << remaining << ")";
+
+            for (size_t i = 0; i < to_post; ++i) {
+              post_single_receive();
+            }
+
+            total_posted_receives_.fetch_add(to_post,
+                                             std::memory_order_acq_rel);
+            in_flight_receives_.fetch_add(to_post, std::memory_order_acq_rel);
+          }
+        }
       }
     }
 

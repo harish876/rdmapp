@@ -1,0 +1,47 @@
+harish01@node1:~/harish_work/SDR_RDMA_UDP/external/rdmapp$ ./build/rdma_sdr_runner client --host 130.127.134.60 --config ./examples/client.config --iters 5
+mlx5dv is supported
+[DEBUG] [src/device.cc:109] opened Infiniband device gid=00:00:00:00:00:00:00:00:00:00:ff:ff:80:6e:db:a7 lid=0 link_layer=ethernet
+[Config] Loaded configuration from ./examples/client.config
+[INFO] Loaded configuration from ./examples/client.config
+[Config] Sender Config: 
+  buffer_size = 524288000
+  enable_inline_sends = 0
+  mtu = 1024
+  chunk_size = 16
+  rx_depth = 8192
+  transport type = uc
+  enable_logging = false
+  logging_level = debug
+  enable_batched_recvs = false
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 1) ===
+Sent 512000 packets, 524288000 bytes
+Transfer time: 5282.4 ms (5.2824 seconds)
+Throughput: 94.6539 MB/s (794.014 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 2) ===
+Sent 512000 packets, 524288000 bytes
+Transfer time: 5180.9 ms (5.18091 seconds)
+Throughput: 96.5082 MB/s (809.57 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 3) ===
+Sent 512000 packets, 524288000 bytes
+Transfer time: 5176.73 ms (5.17673 seconds)
+Throughput: 96.5861 MB/s (810.223 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 4) ===
+Sent 512000 packets, 524288000 bytes
+Transfer time: 59665.8 ms (59.6658 seconds)
+Throughput: 8.38001 MB/s (70.2966 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 5) ===
+Sent 512000 packets, 524288000 bytes
+Transfer time: 5118.7 ms (5.1187 seconds)
+Throughput: 97.681 MB/s (819.408 Mbit/sec)
+
+=== SENDER AVERAGES OVER 5 ITERATIONS ===
+Average packets: 512000
+Average bytes: 5.24288e+08
+Average duration: 16084.9 ms
+Average throughput: 31.085 MB/s (260.76 Mbit/sec)
+[DEBUG] [src/device.cc:188] closed device gid=00:00:00:00:00:00:00:00:00:00:ff:ff:80:6e:db:a7 lid=0

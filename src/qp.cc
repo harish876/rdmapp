@@ -20,8 +20,8 @@
 #include <utility>
 #include <vector>
 
-#include <infiniband/verbs.h>
 #include <infiniband/mlx5dv.h>
+#include <infiniband/verbs.h>
 
 #include "rdmapp/error.h"
 #include "rdmapp/executor.h"
@@ -55,7 +55,7 @@ qp::qp(std::shared_ptr<rdmapp::pd> pd, std::shared_ptr<cq> recv_cq,
        std::shared_ptr<cq> send_cq, std::shared_ptr<srq> srq)
     : qp_(nullptr), pd_(pd), recv_cq_(recv_cq), send_cq_(send_cq), srq_(srq),
       qp_type_(IBV_QPT_RC) {
-  //create_mlx5();
+  // create_mlx5();
   create();
   init();
 }
@@ -69,15 +69,15 @@ qp::qp(std::shared_ptr<rdmapp::pd> pd, std::shared_ptr<cq> recv_cq,
        std::shared_ptr<srq> srq)
     : qp_(nullptr), pd_(pd), recv_cq_(recv_cq), send_cq_(send_cq), srq_(srq),
       qp_type_(qp_type) {
-  //create_mlx5();
+  // create_mlx5();
   create(qp_type);
   init();
 }
 
 qp::qp(const uint16_t remote_lid, const uint32_t remote_qpn,
        const uint32_t remote_psn, const union ibv_gid remote_gid,
-       std::shared_ptr<pd> pd, std::shared_ptr<cq> cq,
-       enum ibv_qp_type qp_type, std::shared_ptr<srq> srq)
+       std::shared_ptr<pd> pd, std::shared_ptr<cq> cq, enum ibv_qp_type qp_type,
+       std::shared_ptr<srq> srq)
     : qp(remote_lid, remote_qpn, remote_psn, remote_gid, pd, cq, cq, qp_type,
          srq) {}
 
@@ -93,6 +93,14 @@ qp::qp(const uint16_t remote_lid, const uint32_t remote_qpn,
 
 std::vector<uint8_t> &qp::user_data() { return user_data_; }
 
+std::string qp::user_data_as_string() const {
+  return std::string(user_data_.begin(), user_data_.end());
+}
+
+void qp::set_user_data_from_string(const std::string &s) {
+  user_data_.assign(s.begin(), s.end());
+}
+
 std::shared_ptr<pd> qp::pd_ptr() const { return pd_; }
 
 std::vector<uint8_t> qp::serialize() const {
@@ -107,9 +115,7 @@ std::vector<uint8_t> qp::serialize() const {
   return buffer;
 }
 
-void qp::create() {
-  create(IBV_QPT_RC);
-}
+void qp::create() { create(IBV_QPT_RC); }
 
 void qp::create(enum ibv_qp_type qp_type) {
   qp_type_ = qp_type;
@@ -120,8 +126,9 @@ void qp::create(enum ibv_qp_type qp_type) {
   qp_init_attr.send_cq = send_cq_->cq_;
   qp_init_attr.cap.max_recv_sge = 1;
   qp_init_attr.cap.max_send_sge = 1;
-  qp_init_attr.cap.max_recv_wr = 1024;
-  qp_init_attr.cap.max_send_wr = 1024;
+  qp_init_attr.cap.max_recv_wr = 2048;    // If set to 32768 then segfaults
+  qp_init_attr.cap.max_send_wr = 2048;    // If set to 32768 then segfaults
+  qp_init_attr.cap.max_inline_data = 256; // Only when IBV_SEND_INLINE enabled
   qp_init_attr.sq_sig_all = 0;
   qp_init_attr.qp_context = this;
 
@@ -163,26 +170,27 @@ void qp::create_mlx5() {
   }
 
   struct ibv_qp_init_attr_ex ex = {};
-  ex.qp_type    = qp_init_attr.qp_type;
-  ex.send_cq    = qp_init_attr.send_cq;
-  ex.recv_cq    = qp_init_attr.recv_cq;
-  ex.cap        = qp_init_attr.cap;
+  ex.qp_type = qp_init_attr.qp_type;
+  ex.send_cq = qp_init_attr.send_cq;
+  ex.recv_cq = qp_init_attr.recv_cq;
+  ex.cap = qp_init_attr.cap;
   ex.sq_sig_all = qp_init_attr.sq_sig_all;
   ex.qp_context = qp_init_attr.qp_context;
-  ex.comp_mask  = IBV_QP_INIT_ATTR_PD;  
-  ex.pd         = pd_->pd_;
+  ex.comp_mask = IBV_QP_INIT_ATTR_PD;
+  ex.pd = pd_->pd_;
   if (srq_ != nullptr) {
     ex.srq = raw_srq_;
   }
   struct mlx5dv_qp_init_attr dv = {};
-  dv.comp_mask   = MLX5DV_QP_INIT_ATTR_MASK_QP_CREATE_FLAGS;
+  dv.comp_mask = MLX5DV_QP_INIT_ATTR_MASK_QP_CREATE_FLAGS;
   dv.create_flags = MLX5DV_QP_CREATE_DISABLE_SCATTER_TO_CQE;
 
-  ibv_context* ctx = pd_->pd_->context;
+  ibv_context *ctx = pd_->pd_->context;
   qp_ = mlx5dv_create_qp(ctx, &ex, &dv);
   if (!qp_) {
-    RDMAPP_LOG_TRACE("mlx5dv_create_qp failed (%s), falling back to ibv_create_qp",
-                     strerror(errno));
+    RDMAPP_LOG_TRACE(
+        "mlx5dv_create_qp failed (%s), falling back to ibv_create_qp",
+        strerror(errno));
     qp_ = ::ibv_create_qp(pd_->pd_, &qp_init_attr);
   }
 
@@ -199,7 +207,7 @@ void qp::init() {
   qp_attr.qp_state = IBV_QPS_INIT;
   qp_attr.pkey_index = 0;
   qp_attr.port_num = pd_->device_ptr()->port_num();
-  
+
   // Set access flags based on QP type
   if (qp_type_ == IBV_QPT_RC) {
     qp_attr.qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
@@ -208,7 +216,7 @@ void qp::init() {
     // UC QPs only support REMOTE_WRITE and LOCAL_WRITE
     qp_attr.qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE;
   }
-  
+
   try {
     check_rc(::ibv_modify_qp(qp_, &qp_attr,
                              IBV_QP_STATE | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS |
@@ -227,7 +235,7 @@ void qp::rtr(uint16_t remote_lid, uint32_t remote_qpn, uint32_t remote_psn,
   struct ibv_qp_attr qp_attr = {};
   ::bzero(&qp_attr, sizeof(qp_attr));
   qp_attr.qp_state = IBV_QPS_RTR;
-  qp_attr.path_mtu = pd_->device_ptr()->active_mtu();
+  qp_attr.path_mtu = pd_->device_ptr()->port_attr_.active_mtu;
   qp_attr.dest_qp_num = remote_qpn;
   qp_attr.rq_psn = remote_psn;
   qp_attr.ah_attr.is_global = 1;
@@ -297,6 +305,114 @@ void qp::post_send(struct ibv_send_wr const &send_wr,
   check_rc(::ibv_post_send(qp_, const_cast<struct ibv_send_wr *>(&send_wr),
                            &bad_send_wr),
            "failed to post send");
+}
+
+rdmapp::task<void> qp::post_batch_and_await(struct ibv_send_wr &head,
+                                            struct ibv_send_wr &tail) {
+  struct batch_awaitable {
+    qp *qpp;
+    struct ibv_send_wr *head;
+    struct ibv_send_wr *tail;
+    executor::callback_ptr cb{nullptr};
+    struct ibv_wc wc{};
+    bool await_ready() const noexcept { return false; }
+    bool await_suspend(std::coroutine_handle<> h) noexcept {
+      // Create the callback that will resume this coroutine
+      cb = executor::make_callback([this, h](const struct ibv_wc &w) {
+        wc = w;
+        h.resume();
+      });
+      // Signal tail and attach callback
+      tail->send_flags |= IBV_SEND_SIGNALED;
+      // If inline sends are enabled and the tail payload is small, add INLINE
+      if (qpp->inline_sends_enabled_ && tail->sg_list && tail->sg_list->length <= 256) {
+        tail->send_flags |= IBV_SEND_INLINE;
+      }
+      tail->wr_id = reinterpret_cast<uint64_t>(cb);
+
+      struct ibv_send_wr *bad = nullptr;
+      try {
+        check_rc(::ibv_post_send(qpp->qp_, head, &bad),
+                 "failed to post batch send");
+      } catch (...) {
+        executor::destroy_callback(cb);
+        throw;
+      }
+      return true;
+    }
+    void await_resume() {
+      check_wc_status(wc.status, "failed to send batch");
+      // The executor worker destroys the callback after invocation.
+    }
+  };
+
+  co_await batch_awaitable{this, &head, &tail};
+  co_return;
+}
+
+rdmapp::task<void>
+qp::post_batch_and_await(std::vector<struct ibv_send_wr> &wrs) {
+  if (wrs.empty())
+    co_return;
+  for (size_t i = 0; i + 1 < wrs.size(); ++i) {
+    wrs[i].next = &wrs[i + 1];
+  }
+  auto &head = wrs.front();
+  auto &tail = wrs.back();
+  co_await post_batch_and_await(head, tail);
+  co_return;
+}
+
+// Post a linked list of receive WRs and await the completion of the last one.
+// The tail WR gets a callback wr_id; earlier WRs can have wr_id = 0.
+rdmapp::task<void> qp::post_recv_batch_and_await(struct ibv_recv_wr &head,
+                                                 struct ibv_recv_wr &tail) {
+  struct recv_batch_awaitable {
+    qp *qpp;
+    struct ibv_recv_wr *head;
+    struct ibv_recv_wr *tail;
+    executor::callback_ptr cb{nullptr};
+    struct ibv_wc wc{};
+    bool await_ready() const noexcept { return false; }
+    bool await_suspend(std::coroutine_handle<> h) noexcept {
+      cb = executor::make_callback([this, h](const struct ibv_wc &w) {
+        wc = w;
+        h.resume();
+      });
+      // Attach callback to tail only
+      tail->wr_id = reinterpret_cast<uint64_t>(cb);
+
+      struct ibv_recv_wr *bad = nullptr;
+      try {
+        check_rc(::ibv_post_recv(qpp->qp_, head, &bad),
+                 "failed to post batch recv");
+      } catch (...) {
+        executor::destroy_callback(cb);
+        throw;
+      }
+      return true;
+    }
+    void await_resume() {
+      check_wc_status(wc.status, "failed to complete batch recv");
+      // executor worker destroys the callback after invocation
+    }
+  };
+
+  co_await recv_batch_awaitable{this, &head, &tail};
+  co_return;
+}
+
+rdmapp::task<void>
+qp::post_recv_batch_and_await(std::vector<struct ibv_recv_wr> &wrs) {
+  if (wrs.empty())
+    co_return;
+  for (size_t i = 0; i + 1 < wrs.size(); ++i) {
+    wrs[i].next = &wrs[i + 1];
+  }
+  auto &head = wrs.front();
+  auto &tail = wrs.back();
+  co_await post_recv_batch_and_await(head, tail);
+  co_return;
 }
 
 void qp::post_recv(struct ibv_recv_wr const &recv_wr,
@@ -406,7 +522,12 @@ bool qp::send_awaitable::await_suspend(std::coroutine_handle<> h) noexcept {
   send_wr.next = nullptr;
   send_wr.num_sge = 1;
   send_wr.wr_id = reinterpret_cast<uint64_t>(callback);
+  // Always signal; optionally enable inline for small payloads when configured
   send_wr.send_flags = IBV_SEND_SIGNALED;
+  // Use inline only if enabled and payload fits within QP max_inline_data (256)
+  if (qp_->inline_sends_enabled_ && local_mr_->length() <= 256) {
+    send_wr.send_flags |= IBV_SEND_INLINE;
+  }
   send_wr.sg_list = &send_sge;
   if (is_rdma()) {
     assert(remote_mr_.addr() != nullptr);

@@ -134,7 +134,8 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    Logger::set_enabled(config.enable_logging);
+  Logger::set_enabled(config.enable_logging);
+  Logger::set_level(Logger::level_from_string(config.logging_level));
 
     size_t buffer_size = config.buffer_size;
 

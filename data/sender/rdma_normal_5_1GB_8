@@ -1,0 +1,47 @@
+harish01@node1:~/harish_work/SDR_RDMA_UDP/external/rdmapp$ ./build/rdma_sdr_runner client --host 130.127.134.60 --config ./examples/client.config --iters 5
+mlx5dv is supported
+[DEBUG] [src/device.cc:109] opened Infiniband device gid=00:00:00:00:00:00:00:00:00:00:ff:ff:80:6e:db:a7 lid=0 link_layer=ethernet
+[Config] Loaded configuration from ./examples/client.config
+[INFO] Loaded configuration from ./examples/client.config
+[Config] Sender Config: 
+  buffer_size = 1073741824
+  enable_inline_sends = 0
+  mtu = 1024
+  chunk_size = 16
+  rx_depth = 8192
+  transport type = uc
+  enable_logging = false
+  logging_level = debug
+  enable_batched_recvs = false
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 1) ===
+Sent 1048576 packets, 1073741824 bytes
+Transfer time: 10572.5 ms (10.5725 seconds)
+Throughput: 96.8546 MB/s (812.475 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 2) ===
+Sent 1048576 packets, 1073741824 bytes
+Transfer time: 59227.6 ms (59.2276 seconds)
+Throughput: 17.2892 MB/s (145.033 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 3) ===
+Sent 1048576 packets, 1073741824 bytes
+Transfer time: 59530.5 ms (59.5305 seconds)
+Throughput: 17.2013 MB/s (144.295 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 4) ===
+Sent 1048576 packets, 1073741824 bytes
+Transfer time: 59322.2 ms (59.3222 seconds)
+Throughput: 17.2617 MB/s (144.801 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 5) ===
+Sent 1048576 packets, 1073741824 bytes
+Transfer time: 10447.2 ms (10.4472 seconds)
+Throughput: 98.0164 MB/s (822.221 Mbit/sec)
+
+=== SENDER AVERAGES OVER 5 ITERATIONS ===
+Average packets: 1.04858e+06
+Average bytes: 1.07374e+09
+Average duration: 39820 ms
+Average throughput: 25.7157 MB/s (215.719 Mbit/sec)
+[DEBUG] [src/device.cc:188] closed device gid=00:00:00:00:00:00:00:00:00:00:ff:ff:80:6e:db:a7 lid=0

@@ -4,6 +4,7 @@
 #include "rdma_util.h"
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -21,7 +22,9 @@ public:
   ~RDMAReceiver();
 
   // Receive data from sender
-  rdmapp::task<void> receive_data(size_t expected_size);
+  rdmapp::task<void> receive_data(size_t expected_size, uint8_t msg_id = 0);
+  
+  rdmapp::task<void> receive_data();
 
   // Get statistics
   size_t get_packets_received() const { return packets_received_; }
@@ -30,6 +33,9 @@ public:
 private:
   // Send CTS to sender
   rdmapp::task<void> send_cts(size_t buffer_size);
+
+  // Send CTS to sender overloaded
+  rdmapp::task<void> send_cts(size_t buffer_size, uint8_t msg_id);
 
   // Post receive requests for immediates (initial batch)
   rdmapp::task<void> post_receives(size_t count);
@@ -65,6 +71,12 @@ private:
   size_t total_packets_{0};
   size_t total_chunks_{0};
   size_t expected_size_{0};
+
+  // Receive posting / in-flight tracking
+  // Number of receive WRs currently in flight (posted but not yet completed)
+  std::atomic<size_t> in_flight_receives_{0};
+  // Total number of receives we've posted so far (cumulative)
+  std::atomic<size_t> total_posted_receives_{0};
 
   // Background threads for processing
   std::thread completion_thread_;

@@ -100,3 +100,9 @@ Install `clang-format` and `pre-commit`.
 pip install pre-commit
 pre-commit install
 ```
+
+# SDR Runner
+./build/rdma_sdr_runner --help
+./build/rdma_sdr_runner server --config ./examples/rdma.config
+./build/rdma_sdr_runner client --host 127.0.0.1 --config ./examples/rdma.config
+```

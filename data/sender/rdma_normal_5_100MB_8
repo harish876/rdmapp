@@ -1,0 +1,47 @@
+harish01@node1:~/harish_work/SDR_RDMA_UDP/external/rdmapp$ ./build/rdma_sdr_runner client --host 130.127.134.60 --config ./examples/client.config --iters 5
+mlx5dv is supported
+[DEBUG] [src/device.cc:109] opened Infiniband device gid=00:00:00:00:00:00:00:00:00:00:ff:ff:80:6e:db:a7 lid=0 link_layer=ethernet
+[Config] Loaded configuration from ./examples/client.config
+[INFO] Loaded configuration from ./examples/client.config
+[Config] Sender Config: 
+  buffer_size = 104857600
+  enable_inline_sends = 0
+  mtu = 1024
+  chunk_size = 16
+  rx_depth = 8192
+  transport type = uc
+  enable_logging = false
+  logging_level = debug
+  enable_batched_recvs = false
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 1) ===
+Sent 102400 packets, 104857600 bytes
+Transfer time: 1126.35 ms (1.12635 seconds)
+Throughput: 88.7824 MB/s (744.76 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 2) ===
+Sent 102400 packets, 104857600 bytes
+Transfer time: 1133.22 ms (1.13322 seconds)
+Throughput: 88.2441 MB/s (740.245 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 3) ===
+Sent 102400 packets, 104857600 bytes
+Transfer time: 59943.9 ms (59.9439 seconds)
+Throughput: 1.66823 MB/s (13.9941 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 4) ===
+Sent 102400 packets, 104857600 bytes
+Transfer time: 1136.62 ms (1.13662 seconds)
+Throughput: 87.9799 MB/s (738.029 Mbit/sec)
+[DEBUG] [examples/socket/tcp_connection.cc:85] fd 7 connected
+=== SENDER COMPLETE (iteration 5) ===
+Sent 102400 packets, 104857600 bytes
+Transfer time: 1122.39 ms (1.12239 seconds)
+Throughput: 89.0954 MB/s (747.386 Mbit/sec)
+
+=== SENDER AVERAGES OVER 5 ITERATIONS ===
+Average packets: 102400
+Average bytes: 1.04858e+08
+Average duration: 12892.5 ms
+Average throughput: 7.75646 MB/s (65.0659 Mbit/sec)
+[DEBUG] [src/device.cc:188] closed device gid=00:00:00:00:00:00:00:00:00:00:ff:ff:80:6e:db:a7 lid=0

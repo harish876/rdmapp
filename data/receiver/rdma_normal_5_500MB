@@ -1,0 +1,60 @@
+harish01@node2:~/harish_work/SDR_RDMA_UDP/external/rdmapp$ ./build/rdma_sdr_runner server --config ./examples/server.config --iters 5 --metrics-out test.csv
+mlx5dv is supported
+[DEBUG] [src/device.cc:109] opened Infiniband device gid=00:00:00:00:00:00:00:00:00:00:ff:ff:82:7f:86:3c lid=0 link_layer=ethernet
+[Config] Loaded configuration from ./examples/server.config
+[INFO] Loaded configuration from ./examples/server.config
+[Config] Receiver Config: 
+  cpu_core_id = 2
+  receiver_timeout_seconds = 60
+  max_in_flight_requests = 2048
+  post_per_completion = true
+  mtu = 1024
+  chunk_size = 16
+  rx_depth = 8192
+  transport type = uc
+  enable_logging = false
+  logging_level = debug
+[DEBUG] [examples/socket/tcp_listener.cc:117] binding 0.0.0.0:8011
+[DEBUG] [examples/socket/tcp_listener.cc:130] acceptor fd 7 listening on 8011
+[DEBUG] [examples/socket/tcp_listener.cc:59] accepted connection from 128.110.219.167:12977 fd=8
+[ERROR] Client Expected Size: 524288000
+[ERROR] Client Message Id: 0
+=== RECEIVER COMPLETE (iteration 1) ===
+Received 512000 packets, 524288000 bytes
+Transfer time: 23991.9 ms (23.9919 seconds)
+Throughput: 20.8404 MB/s (174.822 Mbit/sec)
+[DEBUG] [examples/socket/tcp_listener.cc:59] accepted connection from 128.110.219.167:56963 fd=8
+[ERROR] Client Expected Size: 524288000
+[ERROR] Client Message Id: 0
+=== RECEIVER COMPLETE (iteration 2) ===
+Received 512000 packets, 524288000 bytes
+Transfer time: 21460.7 ms (21.4607 seconds)
+Throughput: 23.2984 MB/s (195.441 Mbit/sec)
+[DEBUG] [examples/socket/tcp_listener.cc:59] accepted connection from 128.110.219.167:56004 fd=8
+[ERROR] Client Expected Size: 524288000
+[ERROR] Client Message Id: 0
+=== RECEIVER COMPLETE (iteration 3) ===
+Received 511999 packets, 524288000 bytes
+Transfer time: 60587.2 ms (60.5872 seconds)
+Throughput: 8.25257 MB/s (69.2276 Mbit/sec)
+[DEBUG] [examples/socket/tcp_listener.cc:59] accepted connection from 128.110.219.167:52872 fd=8
+[ERROR] Client Expected Size: 524288000
+[ERROR] Client Message Id: 0
+=== RECEIVER COMPLETE (iteration 4) ===
+Received 512000 packets, 524288000 bytes
+Transfer time: 22312.5 ms (22.3125 seconds)
+Throughput: 22.409 MB/s (187.98 Mbit/sec)
+[DEBUG] [examples/socket/tcp_listener.cc:59] accepted connection from 128.110.219.167:42211 fd=8
+[ERROR] Client Expected Size: 524288000
+[ERROR] Client Message Id: 0
+=== RECEIVER COMPLETE (iteration 5) ===
+Received 512000 packets, 524288000 bytes
+Transfer time: 22751.8 ms (22.7518 seconds)
+Throughput: 21.9763 MB/s (184.35 Mbit/sec)
+
+=== RECEIVER AVERAGES OVER 5 ITERATIONS ===
+Average packets: 512000
+Average bytes: 5.24288e+08
+Average duration: 30220.8 ms
+Average throughput: 16.5449 MB/s (138.789 Mbit/sec)
+[DEBUG] [src/device.cc:188] closed device gid=00:00:00:00:00:00:00:00:00:00:ff:ff:82:7f:86:3c lid=0
