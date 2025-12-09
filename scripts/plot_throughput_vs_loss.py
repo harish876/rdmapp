@@ -13,6 +13,8 @@ Example rows (tab or comma delimited is fine as long as DictReader sees the name
 Outputs PNGs into ../plots/:
     - sndr_throughput_vs_loss.png
     - rcvr_throughput_vs_loss.png
+    - sndr_transfer_time_vs_loss.png
+    - rcvr_transfer_time_vs_loss.png
 """
 
 import csv
@@ -34,7 +36,9 @@ COLS = {
     "size": "size",
     "loss": "loss",
     "sndr_tp": "SNDR TP (Mbps)",
+    "sndr_tt": "SDNR TT (ms)",  # Note: typo in CSV header "SDNR" instead of "SNDR"
     "rcvr_tp": "RCVR TP (Mbps)",
+    "rcvr_tt": "RCVR TT (ms)",
 }
 
 
@@ -74,24 +78,24 @@ def read_rows(path: str) -> List[Dict[str, str]]:
 
 def build_series_by_size(
     rows: List[Dict[str, str]],
-    tp_col: str,
+    value_col: str,
 ) -> Dict[str, List[Tuple[float, float]]]:
     """
-    For a given throughput column, group points by message size.
+    For a given value column (throughput or transfer time), group points by message size.
 
     Returns:
-        { size_str: [(loss_percent, throughput_mbps), ...], ... }
+        { size_str: [(loss_percent, value), ...], ... }
     """
     grouped: Dict[str, List[Tuple[float, float]]] = {}
     for r in rows:
         size = r.get(COLS["size"], "").strip()
         loss_val = parse_loss_percent(r.get(COLS["loss"], ""))
-        tp_val = parse_float(r.get(tp_col, "nan"))
+        value = parse_float(r.get(value_col, "nan"))
 
-        if math.isnan(loss_val) or math.isnan(tp_val) or not size:
+        if math.isnan(loss_val) or math.isnan(value) or not size:
             continue
 
-        grouped.setdefault(size, []).append((loss_val, tp_val))
+        grouped.setdefault(size, []).append((loss_val, value))
 
     # Sort each size's series by loss ascending
     for size, pts in grouped.items():
@@ -100,14 +104,14 @@ def build_series_by_size(
     return grouped
 
 
-def plot_throughput_vs_loss(
+def plot_value_vs_loss(
     series: Dict[str, List[Tuple[float, float]]],
     title: str,
     ylabel: str,
     filename: str,
 ):
     """
-    series: {size_str: [(loss%, throughput), ...]}
+    series: {size_str: [(loss%, value), ...]}
     """
     plt.figure(figsize=(9, 5))
 
@@ -162,23 +166,44 @@ def plot_throughput_vs_loss(
 def main():
     rows = read_rows(LOSS_CSV)
 
-    sndr_series = build_series_by_size(rows, COLS["sndr_tp"])
-    rcvr_series = build_series_by_size(rows, COLS["rcvr_tp"])
+    # Throughput plots
+    sndr_tp_series = build_series_by_size(rows, COLS["sndr_tp"])
+    rcvr_tp_series = build_series_by_size(rows, COLS["rcvr_tp"])
 
     # 1) SNDR throughput vs loss
-    plot_throughput_vs_loss(
-        sndr_series,
+    plot_value_vs_loss(
+        sndr_tp_series,
         title="RDMA SR - Sender Throughput vs Loss",
         ylabel="Sender Throughput (Mbps)",
         filename="sndr_throughput_vs_loss.png",
     )
 
     # 2) RCVR throughput vs loss
-    plot_throughput_vs_loss(
-        rcvr_series,
+    plot_value_vs_loss(
+        rcvr_tp_series,
         title="RDMA SR - Receiver Throughput vs Loss",
         ylabel="Receiver Throughput (Mbps)",
         filename="rcvr_throughput_vs_loss.png",
+    )
+
+    # Transfer time plots
+    sndr_tt_series = build_series_by_size(rows, COLS["sndr_tt"])
+    rcvr_tt_series = build_series_by_size(rows, COLS["rcvr_tt"])
+
+    # 3) SNDR transfer time vs loss
+    plot_value_vs_loss(
+        sndr_tt_series,
+        title="RDMA SR - Sender Transfer Time vs Loss",
+        ylabel="Sender Transfer Time (ms)",
+        filename="sndr_transfer_time_vs_loss.png",
+    )
+
+    # 4) RCVR transfer time vs loss
+    plot_value_vs_loss(
+        rcvr_tt_series,
+        title="RDMA SR - Receiver Transfer Time vs Loss",
+        ylabel="Receiver Transfer Time (ms)",
+        filename="rcvr_transfer_time_vs_loss.png",
     )
 
 
