@@ -10,11 +10,9 @@ Example rows (tab or comma delimited is fine as long as DictReader sees the name
     1GiB,0.50%,96.43775714,89097.95714,89.98487143,95465.34286
     ...
 
-Outputs PNGs into ../plots/:
-    - sndr_throughput_vs_loss.png
-    - rcvr_throughput_vs_loss.png
-    - sndr_transfer_time_vs_loss.png
-    - rcvr_transfer_time_vs_loss.png
+Outputs PNGs into ../plots/ (paired subplots):
+    - throughput_vs_loss.png        (a) Sender, (b) Receiver
+    - transfer_time_vs_loss.png     (a) Sender, (b) Receiver
 """
 
 import csv
@@ -104,22 +102,9 @@ def build_series_by_size(
     return grouped
 
 
-def plot_value_vs_loss(
-    series: Dict[str, List[Tuple[float, float]]],
-    title: str,
-    ylabel: str,
-    filename: str,
-):
-    """
-    series: {size_str: [(loss%, value), ...]}
-    """
-    plt.figure(figsize=(9, 5))
-
-    # Desired order of sizes for consistent legend / colors.
-    # Adjust if you add/remove sizes.
+def _plot_single_loss_axis(ax, series, title, ylabel):
+    """Helper to draw one loss-based axis."""
     size_order = ["1MiB", "10MiB", "100MiB", "500MiB", "1GiB"]
-
-    # Give each size a marker/line style (similar to your other script)
     size_styles = {
         "1MiB": "o-",
         "10MiB": "s-",
@@ -133,77 +118,76 @@ def plot_value_vs_loss(
             continue
         pts = series[size]
         losses = [p[0] for p in pts]
-        tps = [p[1] for p in pts]
+        vals = [p[1] for p in pts]
         style = size_styles.get(size, "o-")
-        plt.plot(losses, tps, style, label=size)
+        ax.plot(losses, vals, style, label=size)
 
-    # If there are any sizes not in size_order, also plot them
     for size, pts in series.items():
         if size in size_order:
             continue
         losses = [p[0] for p in pts]
-        tps = [p[1] for p in pts]
-        plt.plot(losses, tps, "o-", label=size)
+        vals = [p[1] for p in pts]
+        ax.plot(losses, vals, "o-", label=size)
 
-    # X-axis ticks: you can adapt this based on your data
     loss_ticks = [0.0, 0.5, 1.0, 5.0, 10.0]
     loss_labels = ["0%", "0.5%", "1%", "5%", "10%"]
-    plt.xticks(loss_ticks, loss_labels)
+    ax.set_xticks(loss_ticks, loss_labels)
+    ax.set_xlabel("Loss (%)")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.grid(True, which="both", linestyle=":")
+    ax.legend(title="Message size")
 
-    plt.xlabel("Loss (%)")
-    plt.ylabel(ylabel)
-    plt.title(title)
-    plt.grid(True, which="both", linestyle=":")
-    plt.legend(title="Message size")
+
+def plot_pair_vs_loss(
+    series_sndr: Dict[str, List[Tuple[float, float]]],
+    series_rcvr: Dict[str, List[Tuple[float, float]]],
+    title: str,
+    ylabel: str,
+    filename: str,
+):
+    """
+    Draw sender and receiver subplots stacked vertically.
+    """
+    fig, axes = plt.subplots(2, 1, figsize=(7, 9), sharex=False, sharey=False)
+    _plot_single_loss_axis(axes[0], series_sndr, "", ylabel)
+    axes[0].text(0.02, 1.04, "(a) Sender", ha="left", va="bottom", transform=axes[0].transAxes)
+
+    _plot_single_loss_axis(axes[1], series_rcvr, "", ylabel)
+    axes[1].text(0.02, 1.04, "(b) Receiver", ha="left", va="bottom", transform=axes[1].transAxes)
+
+    fig.suptitle(title)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
 
     out_path = os.path.join(PLOTS_DIR, filename)
-    plt.tight_layout()
     plt.savefig(out_path)
-    plt.close()
+    plt.close(fig)
     print(f"Wrote {out_path}")
 
 
 def main():
     rows = read_rows(LOSS_CSV)
 
-    # Throughput plots
+    # Throughput plots (paired)
     sndr_tp_series = build_series_by_size(rows, COLS["sndr_tp"])
     rcvr_tp_series = build_series_by_size(rows, COLS["rcvr_tp"])
-
-    # 1) SNDR throughput vs loss
-    plot_value_vs_loss(
+    plot_pair_vs_loss(
         sndr_tp_series,
-        title="RDMA SR - Sender Throughput vs Loss",
-        ylabel="Sender Throughput (Mbps)",
-        filename="sndr_throughput_vs_loss.png",
-    )
-
-    # 2) RCVR throughput vs loss
-    plot_value_vs_loss(
         rcvr_tp_series,
-        title="RDMA SR - Receiver Throughput vs Loss",
-        ylabel="Receiver Throughput (Mbps)",
-        filename="rcvr_throughput_vs_loss.png",
+        title="RDMA SR - Throughput vs Loss",
+        ylabel="Throughput (Mbps)",
+        filename="throughput_vs_loss.png",
     )
 
-    # Transfer time plots
+    # Transfer time plots (paired)
     sndr_tt_series = build_series_by_size(rows, COLS["sndr_tt"])
     rcvr_tt_series = build_series_by_size(rows, COLS["rcvr_tt"])
-
-    # 3) SNDR transfer time vs loss
-    plot_value_vs_loss(
+    plot_pair_vs_loss(
         sndr_tt_series,
-        title="RDMA SR - Sender Transfer Time vs Loss",
-        ylabel="Sender Transfer Time (ms)",
-        filename="sndr_transfer_time_vs_loss.png",
-    )
-
-    # 4) RCVR transfer time vs loss
-    plot_value_vs_loss(
         rcvr_tt_series,
-        title="RDMA SR - Receiver Transfer Time vs Loss",
-        ylabel="Receiver Transfer Time (ms)",
-        filename="rcvr_transfer_time_vs_loss.png",
+        title="RDMA SR - Transfer Time vs Loss",
+        ylabel="Transfer Time (ms)",
+        filename="transfer_time_vs_loss.png",
     )
 
 

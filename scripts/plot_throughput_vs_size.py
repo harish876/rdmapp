@@ -10,11 +10,9 @@ Example rows (tab or comma delimited is fine as long as DictReader sees the name
     1GiB,0.50%,96.43775714,89097.95714,89.98487143,95465.34286
     ...
 
-Outputs PNGs into ../plots/:
-    - sndr_throughput_vs_size.png
-    - rcvr_throughput_vs_size.png
-    - sndr_transfer_time_vs_size.png
-    - rcvr_transfer_time_vs_size.png
+Outputs PNGs into ../plots/ (paired subplots):
+    - throughput_vs_size.png          (a) Sender, (b) Receiver
+    - transfer_time_vs_size.png       (a) Sender, (b) Receiver
 """
 
 import csv
@@ -177,121 +175,95 @@ def format_size_label(bytes_val: float) -> str:
         return f"{bytes_val:.0f} B"
 
 
-def plot_value_vs_size(
-    series: Dict[float, List[Tuple[float, float]]],
-    size_labels: Dict[float, str],
-    title: str,
-    ylabel: str,
-    filename: str,
-):
-    """
-    series: {loss_percent: [(size_bytes, value), ...]}
-    size_labels: {size_bytes: original_size_string, ...}
-    """
-    plt.figure(figsize=(9, 5))
-    
-    # Sort loss percentages for consistent ordering
+def _plot_single_size_axis(ax, series, size_labels, title, ylabel):
+    """Helper to draw one size-based axis."""
     loss_percentages = sorted(series.keys())
-    
-    # Give each loss% a marker/line style
     markers = ['o', 's', '^', 'd', 'x', '*', 'v', '<', '>', 'p']
     colors = plt.cm.tab10(range(len(loss_percentages)))
-    
+
     for i, loss_pct in enumerate(loss_percentages):
         pts = series[loss_pct]
         sizes = [p[0] for p in pts]
-        tps = [p[1] for p in pts]
-        
+        vals = [p[1] for p in pts]
+
         marker = markers[i % len(markers)]
         color = colors[i]
         label = f"{loss_pct}%"
-        
-        plt.plot(sizes, tps, marker=marker, linestyle='-', color=color, label=label, markersize=6)
-    
-    # Set x-axis to use log scale for better visualization across size ranges
-    plt.xscale('log')
-    
-    # Collect all unique size values from the data
+
+        ax.plot(sizes, vals, marker=marker, linestyle='-', color=color, label=label, markersize=6)
+
+    ax.set_xscale('log')
+
     all_sizes = set()
     for pts in series.values():
         for size_bytes, _ in pts:
             all_sizes.add(size_bytes)
-    
-    # Sort the sizes and use them as tick positions
     tick_positions = sorted(all_sizes)
-    
-    # Create labels using the original size strings
-    tick_labels = []
-    for pos in tick_positions:
-        if pos in size_labels:
-            # Use the original size string (e.g., "1MiB", "10MiB", "1GiB")
-            tick_labels.append(size_labels[pos])
-        else:
-            # Fallback to formatted label if original not found
-            tick_labels.append(format_size_label(pos))
-    
-    ax = plt.gca()
+    tick_labels = [size_labels.get(pos, format_size_label(pos)) for pos in tick_positions]
+
     ax.set_xticks(tick_positions)
     ax.set_xticklabels(tick_labels, rotation=45, ha='right')
-    
-    plt.xlabel("Message Size")
-    plt.ylabel(ylabel)
-    plt.title(title)
-    plt.grid(True, which="both", linestyle=":", alpha=0.5)
-    plt.legend(title="Loss %", loc='best')
-    
+
+    ax.set_xlabel("Message Size")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.grid(True, which="both", linestyle=":", alpha=0.5)
+    ax.legend(title="Loss %", loc='best')
+
+
+def plot_pair_vs_size(
+    sndr_series: Dict[float, List[Tuple[float, float]]],
+    sndr_labels: Dict[float, str],
+    rcvr_series: Dict[float, List[Tuple[float, float]]],
+    rcvr_labels: Dict[float, str],
+    title: str,
+    ylabel: str,
+    filename: str,
+):
+    """Draw sender and receiver subplots stacked vertically."""
+    fig, axes = plt.subplots(2, 1, figsize=(7, 9), sharex=False, sharey=False)
+    _plot_single_size_axis(axes[0], sndr_series, sndr_labels, "", ylabel)
+    axes[0].text(0.02, 1.04, "(a) Sender", ha="left", va="bottom", transform=axes[0].transAxes)
+
+    _plot_single_size_axis(axes[1], rcvr_series, rcvr_labels, "", ylabel)
+    axes[1].text(0.02, 1.04, "(b) Receiver", ha="left", va="bottom", transform=axes[1].transAxes)
+
+    fig.suptitle(title)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+
     out_path = os.path.join(PLOTS_DIR, filename)
-    plt.tight_layout()
     plt.savefig(out_path, dpi=150)
-    plt.close()
+    plt.close(fig)
     print(f"Wrote {out_path}")
 
 
 def main():
     rows = read_rows(LOSS_CSV)
     
-    # Throughput plots
+    # Throughput plots (paired)
     sndr_tp_series, sndr_tp_size_labels = build_series_by_loss(rows, COLS["sndr_tp"])
     rcvr_tp_series, rcvr_tp_size_labels = build_series_by_loss(rows, COLS["rcvr_tp"])
-    
-    # 1) SNDR throughput vs size
-    plot_value_vs_size(
+    plot_pair_vs_size(
         sndr_tp_series,
         sndr_tp_size_labels,
-        title="RDMA SR - Sender Throughput vs Message Size",
-        ylabel="Sender Throughput (Mbps)",
-        filename="sndr_throughput_vs_size.png",
-    )
-    
-    # 2) RCVR throughput vs size
-    plot_value_vs_size(
         rcvr_tp_series,
         rcvr_tp_size_labels,
-        title="RDMA SR - Receiver Throughput vs Message Size",
-        ylabel="Receiver Throughput (Mbps)",
-        filename="rcvr_throughput_vs_size.png",
+        title="RDMA SR - Throughput vs Message Size",
+        ylabel="Throughput (Mbps)",
+        filename="throughput_vs_size.png",
     )
 
-    # Transfer time plots
+    # Transfer time plots (paired)
     sndr_tt_series, sndr_tt_size_labels = build_series_by_loss(rows, COLS["sndr_tt"])
     rcvr_tt_series, rcvr_tt_size_labels = build_series_by_loss(rows, COLS["rcvr_tt"])
-    
-    # 3) SNDR transfer time vs size
-    plot_value_vs_size(
+    plot_pair_vs_size(
         sndr_tt_series,
         sndr_tt_size_labels,
-        title="RDMA SR - Sender Transfer Time vs Message Size",
-        ylabel="Sender Transfer Time (ms)",
-        filename="sndr_transfer_time_vs_size.png",
-    )
-    
-    # 4) RCVR transfer time vs size
-    plot_value_vs_size(
         rcvr_tt_series,
         rcvr_tt_size_labels,
-        title="RDMA SR - Receiver Transfer Time vs Message Size",
-        ylabel="Receiver Transfer Time (ms)",
-        filename="rcvr_transfer_time_vs_size.png",
+        title="RDMA SR - Transfer Time vs Message Size",
+        ylabel="Transfer Time (ms)",
+        filename="transfer_time_vs_size.png",
     )
 
 
