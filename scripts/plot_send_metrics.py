@@ -24,8 +24,8 @@ os.makedirs(PLOTS_DIR, exist_ok=True)
 # Columns of interest
 COLS = {
     'size': 'size(bytes)',
-    'avg_send_mbits': 'avg_send_throughput(MBits/s)',
-    'peak_send_mbits': 'peak_send_throughput(MBits/s)',
+    'avg_send_mb_s': 'avg_send_throughput(MB/s)',
+    'peak_send_mb_s': 'peak_send_throughput(MB/s)',
     'avg_send_ms': 'avg_send_transfer_time(ms)',
     'peak_send_ms': 'peak_send_transfer_time(ms)',
 }
@@ -58,8 +58,8 @@ def extract_series(rows: List[Dict[str, str]]):
     peak_send_ms = []
     for r in rows:
         sizes.append(int(r.get(COLS['size'], '0')))
-        avg_send_mbits.append(parse_float(r.get(COLS['avg_send_mbits'], 'nan')))
-        peak_send_mbits.append(parse_float(r.get(COLS['peak_send_mbits'], 'nan')))
+        avg_send_mbits.append(parse_float(r.get(COLS['avg_send_mb_s'], 'nan')))
+        peak_send_mbits.append(parse_float(r.get(COLS['peak_send_mb_s'], 'nan')))
         avg_send_ms.append(parse_float(r.get(COLS['avg_send_ms'], 'nan')))
         peak_send_ms.append(parse_float(r.get(COLS['peak_send_ms'], 'nan')))
     return sizes, avg_send_mbits, peak_send_mbits, avg_send_ms, peak_send_ms
@@ -110,11 +110,11 @@ positions = list(range(len(xticks)))
 
 # 1) Avg throughput comparison (Normal vs Batch)
 plt.figure(figsize=(9, 5))
-plt.plot(positions, n_avg_mbits, 'o-', label='Normal avg send (Mbits/s)')
-plt.plot(positions, b_avg_mbits, 's-', label='Batch avg send (Mbits/s)')
+plt.plot(positions, n_avg_mbits, 'o-', label='Normal avg send (MB/s)')
+plt.plot(positions, b_avg_mbits, 's-', label='Batch avg send (MB/s)')
 plt.xticks(positions, xtick_labels, rotation=0)
 plt.xlabel('Message size')
-plt.ylabel('Throughput (Mbits/s)')
+plt.ylabel('Throughput (Mb/s)')
 plt.title('Avg Send Throughput: Normal vs Batch')
 plt.grid(True, which='both', linestyle=':')
 plt.legend()
@@ -125,11 +125,11 @@ plt.close()
 
 # 2) Peak throughput comparison (Normal vs Batch)
 plt.figure(figsize=(9, 5))
-plt.plot(positions, n_peak_mbits, 'o--', label='Normal peak send (Mbits/s)')
-plt.plot(positions, b_peak_mbits, 's--', label='Batch peak send (Mbits/s)')
+plt.plot(positions, n_peak_mbits, 'o--', label='Normal peak send (MB/s)')
+plt.plot(positions, b_peak_mbits, 's--', label='Batch peak send (MB/s)')
 plt.xticks(positions, xtick_labels, rotation=0)
 plt.xlabel('Message size')
-plt.ylabel('Throughput (Mbits/s)')
+plt.ylabel('Throughput (Mb/s)')
 plt.title('Peak Send Throughput: Normal vs Batch')
 plt.grid(True, which='both', linestyle=':')
 plt.legend()
@@ -175,24 +175,24 @@ fig, axes = plt.subplots(2, 2, figsize=(12, 8))
 
 # (1) Avg throughput
 ax = axes[0, 0]
-ax.plot(positions, n_avg_mbits, 'o-', label='Normal avg (Mbits/s)')
-ax.plot(positions, b_avg_mbits, 's-', label='Batch avg (Mbits/s)')
+ax.plot(positions, n_avg_mbits, 'o-', label='Normal avg (MB/s)')
+ax.plot(positions, b_avg_mbits, 's-', label='Batch avg (MB/s)')
 ax.set_xticks(positions)
 ax.set_xticklabels(xtick_labels)
 ax.set_xlabel('Message size')
-ax.set_ylabel('Throughput (Mbits/s)')
+ax.set_ylabel('Throughput (MB/s)')
 ax.set_title('Avg Send Throughput')
 ax.grid(True, which='both', linestyle=':')
 ax.legend()
 
 # (2) Peak throughput
 ax = axes[0, 1]
-ax.plot(positions, n_peak_mbits, 'o--', label='Normal peak (Mbits/s)')
-ax.plot(positions, b_peak_mbits, 's--', label='Batch peak (Mbits/s)')
+ax.plot(positions, n_peak_mbits, 'o--', label='Normal peak (MB/s)')
+ax.plot(positions, b_peak_mbits, 's--', label='Batch peak (MB/s)')
 ax.set_xticks(positions)
 ax.set_xticklabels(xtick_labels)
 ax.set_xlabel('Message size')
-ax.set_ylabel('Throughput (Mbits/s)')
+ax.set_ylabel('Throughput (MB/s)')
 ax.set_title('Peak Send Throughput')
 ax.grid(True, which='both', linestyle=':')
 ax.legend()

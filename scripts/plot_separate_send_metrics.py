@@ -4,7 +4,9 @@ import os
 from typing import List, Dict
 import matplotlib.pyplot as plt
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+BASE = os.path.dirname(os.path.dirname(__file__))
+DATA_DIR = os.path.join(BASE, 'data')
+PLOTS_DIR = os.path.join(BASE, 'plots')
 NORMAL_CSV = os.path.join(DATA_DIR, "rdma_normal.csv")
 BATCH_CSV = os.path.join(DATA_DIR, "rdma_message_batch.csv")
 
@@ -96,8 +98,8 @@ def main():
     normal_rows = read_rows(NORMAL_CSV)
     batch_rows = read_rows(BATCH_CSV)
 
-    plot_send_metrics(normal_rows, "RDMA Normal - Send Metrics", os.path.join(DATA_DIR, "rdma_normal_send_metrics.png"))
-    plot_send_metrics(batch_rows, "RDMA Message Batch - Send Metrics", os.path.join(DATA_DIR, "rdma_message_batch_send_metrics.png"))
+    plot_send_metrics(normal_rows, "RDMA Normal - Send Metrics", os.path.join(PLOTS_DIR, "rdma_normal_send_metrics.png"))
+    plot_send_metrics(batch_rows, "RDMA Message Batch - Send Metrics", os.path.join(PLOTS_DIR, "rdma_message_batch_send_metrics.png"))
 
 
 if __name__ == "__main__":
