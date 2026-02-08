@@ -53,3 +53,30 @@ cc_library(
         "-lpthread",
     ],
 )
+
+# RDMAPP examples (acceptor, connector, socket, qp_transmission) for helloworld-style binaries.
+cc_library(
+    name = "rdmapp_examples",
+    srcs = [
+        "examples/acceptor.cc",
+        "examples/connector.cc",
+        "examples/qp_transmission.cc",
+        "examples/socket/channel.cc",
+        "examples/socket/event_loop.cc",
+        "examples/socket/tcp_connection.cc",
+        "examples/socket/tcp_listener.cc",
+    ],
+    hdrs = [
+        "examples/include/acceptor.h",
+        "examples/include/connector.h",
+        "examples/include/qp_transmission.h",
+        "examples/include/socket/channel.h",
+        "examples/include/socket/event_loop.h",
+        "examples/include/socket/tcp_connection.h",
+        "examples/include/socket/tcp_listener.h",
+    ],
+    includes = ["examples/include"],
+    copts = ["-std=c++20"],
+    linkopts = ["-lpthread"],
+    deps = [":rdmapp"],
+)

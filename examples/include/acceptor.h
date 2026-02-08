@@ -30,6 +30,10 @@ class acceptor : public noncopyable {
   // inspect it via get_last_user_data(). This is a copy of the QP's
   // user_data; it is updated on each accept().
   std::vector<uint8_t> user_data_;
+  // If non-empty, use this as the server's user_data in the QP handshake
+  // instead of echoing the client's. Allows e.g. sending MR descriptor at
+  // connect time.
+  std::vector<uint8_t> server_user_data_;
 
 public:
   /**
@@ -96,6 +100,15 @@ public:
            std::shared_ptr<cq> recv_cq, std::shared_ptr<cq> send_cq,
            std::shared_ptr<srq> srq = nullptr,
            enum ibv_qp_type qp_type = IBV_QPT_RC);
+
+  /**
+   * @brief Set user_data to be sent to the client in the next accept()
+   * handshake. If set, this is used instead of echoing the client's user_data.
+   * Clear by setting an empty vector.
+   */
+  void set_server_user_data(std::vector<uint8_t> data) {
+    server_user_data_ = std::move(data);
+  }
 
   /**
    * @brief This function is used to accept an incoming connection and queue
