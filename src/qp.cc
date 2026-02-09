@@ -317,19 +317,15 @@ rdmapp::task<void> qp::post_batch_and_await(struct ibv_send_wr &head,
     struct ibv_wc wc{};
     bool await_ready() const noexcept { return false; }
     bool await_suspend(std::coroutine_handle<> h) noexcept {
-      // Create the callback that will resume this coroutine
       cb = executor::make_callback([this, h](const struct ibv_wc &w) {
         wc = w;
         h.resume();
       });
-      // Signal tail and attach callback
       tail->send_flags |= IBV_SEND_SIGNALED;
-      // If inline sends are enabled and the tail payload is small, add INLINE
       if (qpp->inline_sends_enabled_ && tail->sg_list && tail->sg_list->length <= 256) {
         tail->send_flags |= IBV_SEND_INLINE;
       }
       tail->wr_id = reinterpret_cast<uint64_t>(cb);
-
       struct ibv_send_wr *bad = nullptr;
       try {
         check_rc(::ibv_post_send(qpp->qp_, head, &bad),
@@ -342,7 +338,6 @@ rdmapp::task<void> qp::post_batch_and_await(struct ibv_send_wr &head,
     }
     void await_resume() {
       check_wc_status(wc.status, "failed to send batch");
-      // The executor worker destroys the callback after invocation.
     }
   };
 
@@ -379,7 +374,6 @@ rdmapp::task<void> qp::post_recv_batch_and_await(struct ibv_recv_wr &head,
         wc = w;
         h.resume();
       });
-      // Attach callback to tail only
       tail->wr_id = reinterpret_cast<uint64_t>(cb);
 
       struct ibv_recv_wr *bad = nullptr;
@@ -394,7 +388,6 @@ rdmapp::task<void> qp::post_recv_batch_and_await(struct ibv_recv_wr &head,
     }
     void await_resume() {
       check_wc_status(wc.status, "failed to complete batch recv");
-      // executor worker destroys the callback after invocation
     }
   };
 
